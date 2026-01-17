@@ -1,17 +1,20 @@
-# toolbox-envy
+<p align="center">
+  <img width="256" src="https://raw.githubusercontent.com/EarthmanMuons/toolbox-envy/refs/heads/main/docs/images/toolbox-envy-logo.webp" alt="Toolbox Envy logo">
+</p>
 
-**A shared toolbox for development and release automation.**
+<h1 align="center">Toolbox Envy</h1>
 
 This repository centralizes the small but important scripts that tend to
 accumulate across projects: version management, packaging and release helpers,
 asset processing utilities, and ecosystem specific developer tooling.
 
-The goal is simple:
+It exists to provide a shared, automation toolbox that:
 
-- Keep project repositories clean
-- Avoid duplicating scripts across multiple codebases
-- Make tooling usable both locally and in CI
-- Provide a consistent, opinionated developer experience
+- Keeps individual project repositories clean
+- Eliminates duplicated logic across codebases
+- Works identically in local environments and CI
+- Prefers simple, composable shell implementations
+- Remains easy to audit, maintain, and grow over time
 
 ---
 
@@ -29,16 +32,6 @@ toolbox-envy/
 
 Each ecosystem directory is designed to be added to your PATH independently so
 projects only pull in the tools they actually need.
-
-## Philosophy
-
-- Scripts are source controlled and human readable
-- CI workflows call the same tools used locally
-- Prefer composable shell utilities over complex action logic
-- Centralize maintenance without over engineering distribution
-
-This repo is intentionally lightweight, practical, and is meant to grow
-organically as new tooling proves broadly useful.
 
 ## Usage
 
@@ -65,7 +58,7 @@ _.path = [
 ]
 ```
 
-### GitHub Actions (CI)
+### Remote CI (GitHub Actions)
 
 Expose toolbox-envy tools directly in workflows using the built-in action:
 
@@ -91,7 +84,7 @@ yours.
 
 ## License
 
-toolbox-envy is released under the [Zero Clause BSD License][LICENSE] (SPDX:
+Toolbox Envy is released under the [Zero Clause BSD License][LICENSE] (SPDX:
 0BSD).
 
 Copyright &copy; 2026 [Aaron Bull Schaefer][EMAIL] and contributors
