@@ -1,0 +1,25 @@
+name: "toolbox-envy: add tools to PATH"
+description: "Adds selected toolbox-envy bin namespaces (and optional project-local bin) to PATH."
+inputs:
+  include_bins:
+    description: "Newline- or comma-separated list of toolbox-envy bin namespace names to expose (e.g. common, flutter, media)."
+    required: true
+  project_bin:
+    description: "Optional project-local bin directory to add first for precedence (relative to workspace unless absolute). If provided, it must exist."
+    required: false
+    default: ""
+  write_summary:
+    description: "If true, write a summary to GITHUB_STEP_SUMMARY."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        bash "${{ github.action_path }}/add-to-path.sh" \
+          --include-bins "${{ inputs.include_bins }}" \
+          --project-bin "${{ inputs.project_bin }}" \
+          --write-summary "${{ inputs.write_summary }}"

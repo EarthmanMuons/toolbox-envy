@@ -40,14 +40,49 @@ projects only pull in the tools they actually need.
 This repo is intentionally lightweight, practical, and is meant to grow
 organically as new tooling proves broadly useful.
 
-## Usage (Typical)
+## Usage
 
-Example using `direnv` in a Flutter project:
+### Local Development
+
+Add the directories you want via `direnv`, `mise`, or similar:
+
+**direnv**
 
 ```bash
 PATH_add ../toolbox-envy/bin/common
 PATH_add ../toolbox-envy/bin/flutter
+PATH_add ../toolbox-envy/bin/media
 ```
+
+**mise**
+
+```toml
+[env]
+_.path = [
+  "../toolbox-envy/bin/common",
+  "../toolbox-envy/bin/flutter",
+  "../toolbox-envy/bin/media",
+]
+```
+
+### GitHub Actions (CI)
+
+Expose toolbox-envy tools directly in workflows using the built-in action:
+
+```yaml
+- name: Add toolbox-envy tools
+  uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
+  with:
+    include_bins: |
+      common
+      flutter
+      media
+```
+
+See [docs/github-action.md][] for full details.
+
+[docs/github-action.md]:
+  https://github.com/EarthmanMuons/toolbox-envy/blob/main/docs/github-action.md
 
 ## Why the Name?
 
