@@ -63,7 +63,7 @@ _.path = [
 Expose toolbox-envy tools directly in workflows using the built-in action:
 
 ```yaml
-- name: Add tools from Toolbox Envy
+- name: Add Toolbox Envy to PATH
   uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
   with:
     include_bins: |

@@ -23,7 +23,7 @@ downloads at runtime.
 ## Usage
 
 ```yaml
-- name: Add tools from Toolbox Envy
+- name: Add Toolbox Envy to PATH
   uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
   with:
     include_bins: |
