@@ -37,7 +37,7 @@ projects only pull in the tools they actually need.
 
 ### Local Development
 
-Add the directories you want via `direnv`, `mise`, or similar:
+Add the Toolbox Envy directories you want via `direnv`, `mise`, or similar:
 
 **direnv**
 
@@ -63,7 +63,7 @@ _.path = [
 Expose toolbox-envy tools directly in workflows using the built-in action:
 
 ```yaml
-- name: Add toolbox-envy tools
+- name: Add tools from Toolbox Envy
   uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
   with:
     include_bins: |
