@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
 	cat <<'USAGE'
-Create and push a lightweight git tag if it does not already exist.
+Create and push a git tag if it does not already exist.
 
 Input:
   - Provide the desired tag/version as a single argument, OR via stdin.
@@ -36,15 +36,28 @@ die() {
 	exit 1
 }
 
-# SemVer 2.0.0:
-# - MAJOR.MINOR.PATCH: numeric, no leading zeros unless exactly "0"
-# - Optional prerelease: -<ident>(.<ident>)*
-#   - ident: [0-9A-Za-z-]+, but numeric idents must not have leading zeros
-# - Optional build: +<ident>(.<ident>)*
-#   - ident: [0-9A-Za-z-]+ (leading zeros allowed here; build has no ordering meaning)
+# SemVer 2.0.0
 is_semver() {
 	local s="$1"
-	[[ $s =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]
+
+	# Numeric identifier: 0 or non-zero followed by digits
+	local num_id='(0|[1-9][0-9]*)'
+
+	# Pre-release identifier:
+	#   - numeric identifiers follow num_id (no leading zeros)
+	#   - alphanumeric identifiers must contain at least one letter or hyphen
+	local pre_id="(${num_id}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+	local pre="(-${pre_id}(\\.${pre_id})*)?"
+
+	# Build identifier: one or more [0-9A-Za-z-], dot-separated
+	local build_id='[0-9A-Za-z-]+'
+	local build="(\\+${build_id}(\\.${build_id})*)?"
+
+	# Core: MAJOR.MINOR.PATCH
+	local core="${num_id}\\.${num_id}\\.${num_id}"
+
+	local semver="^${core}${pre}${build}$"
+	[[ $s =~ $semver ]]
 }
 
 local_tag_exists() {
@@ -146,7 +159,7 @@ main() {
 		exit 0
 	fi
 
-	git tag "$tag"
+	git tag -a "$tag" -m "Release $tag"
 
 	if [[ $do_push == "1" ]]; then
 		git push "$remote" "refs/tags/$tag"
