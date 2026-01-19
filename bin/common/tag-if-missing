@@ -10,23 +10,30 @@ Input:
   - If the input is a SemVer (2.0.0) string, the script prefixes it with "v".
   - If the input is already "v<semver>", it is used as-is.
 
+Behavior:
+  - Default: if the tag is missing, create it (annotated) and push it to the remote.
+    If a new tag is pushed, prints the tag name to stdout.
+    If no tag is created/pushed, prints nothing (silent no-op).
+  - --dry-run: do not create or push anything. If the tag is missing, prints a message to stderr.
+
 Examples:
   tag-if-missing 1.2.3
   tag-if-missing 1.2.3-rc.1
   tag-if-missing 1.2.3-rc.1+build.42
   tag-if-missing v1.2.3+build.42
   get-project-version | tag-if-missing
+  get-project-version | tag-if-missing --dry-run
 
 Usage:
   bin/tag-if-missing [options] [<tag-or-version>]
 
 Options:
   --remote <name>   Remote to check/push to (default: origin)
-  --no-push         Create the tag locally but do not push
+  --dry-run         Do not create or push; only report what would happen (to stderr)
   -h, --help        Show this help
 
 Exit codes:
-  0  Tag already existed, or was created successfully
+  0  Tag already existed, or was created/pushed successfully, or dry-run completed
   1  Usage/config error
 USAGE
 }
@@ -36,7 +43,7 @@ die() {
 	exit 1
 }
 
-# SemVer 2.0.0
+# SemVer 2.0.0 validator.
 is_semver() {
 	local s="$1"
 
@@ -94,7 +101,7 @@ read_input() {
 
 main() {
 	local remote="origin"
-	local do_push="1"
+	local dry_run="0"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -103,8 +110,8 @@ main() {
 			remote="$2"
 			shift 2
 			;;
-		--no-push)
-			do_push="0"
+		--dry-run)
+			dry_run="1"
 			shift
 			;;
 		-h | --help)
@@ -130,9 +137,7 @@ main() {
 	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
 	cd "$repo_root"
 
-	if [[ $do_push == "1" ]]; then
-		git remote get-url "$remote" >/dev/null 2>&1 || die "remote '$remote' does not exist"
-	fi
+	git remote get-url "$remote" >/dev/null 2>&1 || die "remote '$remote' does not exist"
 
 	local raw
 	raw="$(read_input "${1:-}")"
@@ -150,20 +155,26 @@ main() {
 		die "input must be SemVer (optionally prefixed with 'v'); got: '$raw'"
 	fi
 
-	# Idempotency: local first, then remote (if applicable).
+	# Idempotency checks: local first, then remote.
 	if local_tag_exists "$tag"; then
 		exit 0
 	fi
 
-	if [[ $do_push == "1" ]] && remote_tag_exists "$remote" "$tag"; then
+	if remote_tag_exists "$remote" "$tag"; then
 		exit 0
 	fi
 
-	git tag -a "$tag" -m "Release $tag"
-
-	if [[ $do_push == "1" ]]; then
-		git push "$remote" "refs/tags/$tag"
+	if [[ $dry_run == "1" ]]; then
+		printf 'DRY-RUN: would create and push tag %s (remote: %s)\n' "$tag" "$remote" >&2
+		exit 0
 	fi
+
+	# Create the tag (annotated) and push it.
+	git tag -a "$tag" -m "Release $tag"
+	git push "$remote" "refs/tags/$tag"
+
+	# stdout signal for CI: only print when we actually pushed a new tag.
+	printf '%s\n' "$tag"
 }
 
 main "$@"
