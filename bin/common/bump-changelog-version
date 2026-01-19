@@ -3,7 +3,9 @@ set -euo pipefail
 
 usage() {
 	cat >&2 <<'EOF'
-Usage: bump-changelog-version <new-semver>
+Usage:
+  bump-changelog-version <new-semver>
+  get-project-version | bump-changelog-version
 
 Updates CHANGELOG.md (Keep a Changelog style):
 - Converts "## [Unreleased]" into "## [<new>] - <today>"
@@ -14,16 +16,78 @@ Updates CHANGELOG.md (Keep a Changelog style):
 EOF
 }
 
-[[ $# -eq 1 ]] || {
-	usage
-	exit 1
-}
-new_version="$1"
-
 die() {
 	printf "ERROR: %s\n" "$*" >&2
 	exit 1
 }
+
+# SemVer 2.0.0 validator.
+is_semver() {
+	local s="$1"
+
+	# Numeric identifier: 0 or non-zero followed by digits
+	local num_id='(0|[1-9][0-9]*)'
+
+	# Pre-release identifier:
+	#   - numeric identifiers follow num_id (no leading zeros)
+	#   - alphanumeric identifiers must contain at least one letter or hyphen
+	local pre_id="(${num_id}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+	local pre="(-${pre_id}(\\.${pre_id})*)?"
+
+	# Build identifier: one or more [0-9A-Za-z-], dot-separated
+	local build_id='[0-9A-Za-z-]+'
+	local build="(\\+${build_id}(\\.${build_id})*)?"
+
+	# Core: MAJOR.MINOR.PATCH
+	local core="${num_id}\\.${num_id}\\.${num_id}"
+
+	local semver="^${core}${pre}${build}$"
+	[[ $s =~ $semver ]]
+}
+
+read_version_from_stdin() {
+	# Read all of stdin, strip CR, trim whitespace-only lines, take non-empty lines.
+	# Reject if there's more than one non-empty line.
+	local data lines count
+	data="$(cat || true)"
+	data="$(printf '%s' "$data" | tr -d '\r')"
+
+	# Collect non-empty lines (after trimming leading/trailing whitespace).
+	lines="$(
+		printf '%s\n' "$data" |
+			awk '
+        {
+          line=$0
+          sub(/^[[:space:]]+/, "", line)
+          sub(/[[:space:]]+$/, "", line)
+          if (line != "") print line
+        }
+      '
+	)"
+
+	[[ -n $lines ]] || die "No version provided on stdin."
+
+	count="$(printf '%s\n' "$lines" | awk 'END { print NR }')"
+	[[ $count -eq 1 ]] || die "Expected exactly one non-empty line on stdin (got $count)."
+
+	printf '%s\n' "$lines"
+}
+
+# Accept version either as argv[1] or from stdin.
+new_version=""
+if [[ $# -eq 1 ]]; then
+	new_version="$1"
+elif [[ $# -eq 0 ]]; then
+	# If stdin is a TTY, don't block waiting for input.
+	if [[ -t 0 ]]; then
+		usage
+		exit 1
+	fi
+	new_version="$(read_version_from_stdin)"
+else
+	usage
+	exit 1
+fi
 
 repo_root=""
 if [[ -n ${GITHUB_WORKSPACE-} ]]; then
@@ -37,9 +101,7 @@ fi
 
 ##### MAIN
 
-# SemVer 2.0.0 shape check (major.minor.patch with optional -prerelease +build)
-semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-[[ $new_version =~ $semver_re ]] || die "Invalid semver: '$new_version'"
+is_semver "$new_version" || die "Invalid semver: '$new_version'"
 
 changelog="$repo_root/CHANGELOG.md"
 [[ -f $changelog ]] || die "Missing file: $changelog"
@@ -56,7 +118,7 @@ prev_version="$(
       line=$0
       sub(/^##[[:space:]]+\[/, "", line)   # remove leading "## ["
       sub(/\].*$/, "", line)               # keep up to closing bracket
-      # Accept semver-like tokens only
+      # Accept semver-like tokens only (allow prerelease/build-ish separators)
       if (line ~ /^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/) {
         print line
         exit 0
