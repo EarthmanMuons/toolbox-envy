@@ -40,6 +40,28 @@ toolbox-envy/
 Each ecosystem directory is designed to be added to your PATH independently so
 projects only pull in the tools they actually need.
 
+## Example
+
+Toolbox Envy is designed around conventional script interfaces so the same
+operations behave consistently across ecosystems. For example, a CI workflow
+does not need to know how a project stores or updates its version, only that the
+operation behaves predictably:
+
+```sh
+$ get-project-version
+0.8.0
+
+$ get-project-version | bump-semver --minor | set-project-version
+
+$ get-project-version
+0.9.0
+
+$ get-project-version | bump-changelog-version
+```
+
+The workflow defines when versioning occurs. Toolbox Envy defines how those
+versioning operations work across different languages and project types.
+
 ## Usage
 
 ### Local Development
@@ -67,7 +89,7 @@ _.path = [
 
 ### Remote CI (GitHub Actions)
 
-Expose toolbox-envy tools directly in workflows using the built-in action:
+Expose Toolbox Envy tools directly in workflows using the built-in action:
 
 ```yaml
 - name: Add Toolbox Envy to PATH
