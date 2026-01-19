@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat <<'USAGE'
+Create and push a lightweight git tag if it does not already exist.
+
+Input:
+  - Provide the desired tag/version as a single argument, OR via stdin.
+  - If the input is a SemVer (2.0.0) string, the script prefixes it with "v".
+  - If the input is already "v<semver>", it is used as-is.
+
+Examples:
+  tag-if-missing 1.2.3
+  tag-if-missing 1.2.3-rc.1
+  tag-if-missing 1.2.3-rc.1+build.42
+  tag-if-missing v1.2.3+build.42
+  get-project-version | tag-if-missing
+
+Usage:
+  bin/tag-if-missing [options] [<tag-or-version>]
+
+Options:
+  --remote <name>   Remote to check/push to (default: origin)
+  --no-push         Create the tag locally but do not push
+  -h, --help        Show this help
+
+Exit codes:
+  0  Tag already existed, or was created successfully
+  1  Usage/config error
+USAGE
+}
+
+die() {
+	echo "ERROR: $*" >&2
+	exit 1
+}
+
+# SemVer 2.0.0:
+# - MAJOR.MINOR.PATCH: numeric, no leading zeros unless exactly "0"
+# - Optional prerelease: -<ident>(.<ident>)*
+#   - ident: [0-9A-Za-z-]+, but numeric idents must not have leading zeros
+# - Optional build: +<ident>(.<ident>)*
+#   - ident: [0-9A-Za-z-]+ (leading zeros allowed here; build has no ordering meaning)
+is_semver() {
+	local s="$1"
+	[[ $s =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]
+}
+
+local_tag_exists() {
+	git show-ref --tags --verify --quiet "refs/tags/$1"
+}
+
+remote_tag_exists() {
+	local remote="$1"
+	local tag="$2"
+	git ls-remote --exit-code --tags "$remote" "refs/tags/$tag" >/dev/null 2>&1
+}
+
+read_input() {
+	local arg="${1:-}"
+
+	if [[ -n $arg ]]; then
+		printf '%s' "$arg"
+		return 0
+	fi
+
+	if [[ ! -t 0 ]]; then
+		local line
+		IFS= read -r line || true
+		line="${line//$'\r'/}"
+		# trim
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		printf '%s' "$line"
+		return 0
+	fi
+
+	printf ''
+}
+
+main() {
+	local remote="origin"
+	local do_push="1"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--remote)
+			[[ $# -ge 2 ]] || die "--remote requires a value"
+			remote="$2"
+			shift 2
+			;;
+		--no-push)
+			do_push="0"
+			shift
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die "unknown option: $1 (try --help)"
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+
+	command -v git >/dev/null 2>&1 || die "git is required"
+
+	local repo_root
+	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+	cd "$repo_root"
+
+	if [[ $do_push == "1" ]]; then
+		git remote get-url "$remote" >/dev/null 2>&1 || die "remote '$remote' does not exist"
+	fi
+
+	local raw
+	raw="$(read_input "${1:-}")"
+	[[ -n $raw ]] || die "no version/tag provided (pass an argument or pipe one via stdin)"
+
+	# Normalize:
+	# - If raw is a SemVer, convert to v<semver>
+	# - If raw is v<semver>, keep as-is
+	local tag=""
+	if is_semver "$raw"; then
+		tag="v$raw"
+	elif [[ $raw == v* ]] && is_semver "${raw#v}"; then
+		tag="$raw"
+	else
+		die "input must be SemVer (optionally prefixed with 'v'); got: '$raw'"
+	fi
+
+	# Idempotency: local first, then remote (if applicable).
+	if local_tag_exists "$tag"; then
+		exit 0
+	fi
+
+	if [[ $do_push == "1" ]] && remote_tag_exists "$remote" "$tag"; then
+		exit 0
+	fi
+
+	git tag "$tag"
+
+	if [[ $do_push == "1" ]]; then
+		git push "$remote" "refs/tags/$tag"
+	fi
+}
+
+main "$@"
