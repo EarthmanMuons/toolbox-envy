@@ -8,6 +8,11 @@ This repository centralizes the small but important scripts that tend to
 accumulate across projects: version management, packaging and release helpers,
 asset processing utilities, and ecosystem specific developer tooling.
 
+Toolbox Envy is the conceptual companion to the [Reusable Workflows][]
+repository. Where reusable workflows provide high-level CI structure, Toolbox
+Envy houses the concrete, reusable scripts those workflows rely on to keep
+procedural logic out of CI definitions.
+
 It exists to provide a shared, automation toolbox that:
 
 - Keeps individual project repositories clean
@@ -15,6 +20,8 @@ It exists to provide a shared, automation toolbox that:
 - Works identically in local environments and CI
 - Prefers simple, composable shell implementations
 - Remains easy to audit, maintain, and grow over time
+
+[Reusable Workflows]: https://github.com/EarthmanMuons/reusable-workflows
 
 ---
 
