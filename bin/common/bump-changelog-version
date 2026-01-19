@@ -89,7 +89,7 @@ tag_prefix="$(
       if (url ~ /\/commits\/[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/)      { saw_unpref=1 }
     }
     END {
-      # If we didn’t find v-prefixed tags, default to empty (unprefixed).
+      # If we didn'\''t find v-prefixed tags, default to empty (unprefixed).
       # If we found neither style, also default to empty; generation will still work.
       if (saw_unpref) print ""
       else print ""

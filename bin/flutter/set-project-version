@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Usage:
+  set-flutter-version [--bump-build-on-same | --fail-on-same] [X.Y.Z]
+
+Reads desired SemVer core X.Y.Z from stdin OR positional argument (not both).
+
+Behavior:
+  - Reads pubspec.yaml first 'version:' line (expects X.Y.Z+N).
+  - If input core differs from current core: write input core and bump build N -> N+1.
+  - If input core equals current core:
+      - default: no-op (do not bump build)
+      - --bump-build-on-same: bump build anyway
+      - --fail-on-same: exit with error
+
+Notes:
+  - Accepts leading "v" in input and ignores it.
+  - Rejects prerelease/build in input (must be exactly X.Y.Z).
+
+Examples:
+  get-flutter-version-name | bump-semver --patch | set-flutter-version
+  echo "1.0.0" | set-flutter-version --bump-build-on-same   # respin
+EOF
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+bump_on_same="false"
+fail_on_same="false"
+positional=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--bump-build-on-same)
+		[[ $fail_on_same == "false" ]] || die "Cannot combine --bump-build-on-same with --fail-on-same"
+		bump_on_same="true"
+		shift
+		;;
+	--fail-on-same)
+		[[ $bump_on_same == "false" ]] || die "Cannot combine --fail-on-same with --bump-build-on-same"
+		fail_on_same="true"
+		shift
+		;;
+	--*) die "Unknown option: $1" ;;
+	*)
+		positional+=("$1")
+		shift
+		;;
+	esac
+done
+
+[[ ${#positional[@]} -le 1 ]] || die "At most one X.Y.Z argument may be provided"
+
+# Read stdin or positional (not both)
+stdin_has_data="false"
+stdin_content=""
+if [[ ! -t 0 ]]; then
+	stdin_content="$(cat || true)"
+	if [[ -n ${stdin_content//$'\n'/} ]]; then
+		stdin_has_data="true"
+	fi
+fi
+
+if [[ ${#positional[@]} -eq 1 && $stdin_has_data == "true" ]]; then
+	die "Provide version via stdin OR positional argument, not both"
+fi
+if [[ ${#positional[@]} -eq 0 && $stdin_has_data == "false" ]]; then
+	usage
+	die "No version provided (expected stdin or positional X.Y.Z)"
+fi
+
+if [[ ${#positional[@]} -eq 1 ]]; then
+	input_version="${positional[0]}"
+else
+	input_version="$(printf '%s' "$stdin_content" | awk 'NF { print $0; exit }')"
+fi
+
+input_version="$(printf '%s' "$input_version" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+[[ -n $input_version ]] || die "Empty version input"
+
+input_version="${input_version#v}"
+input_version="${input_version#V}"
+
+if [[ ! $input_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+	die "Expected version core X.Y.Z (got: '$input_version')"
+fi
+
+new_major="${BASH_REMATCH[1]}"
+new_minor="${BASH_REMATCH[2]}"
+new_patch="${BASH_REMATCH[3]}"
+
+for n in "$new_major" "$new_minor" "$new_patch"; do
+	[[ $n =~ ^0[0-9]+$ ]] && die "Invalid core number with leading zero: '$n' in '$input_version'"
+done
+
+new_core="${new_major}.${new_minor}.${new_patch}"
+
+# Repo root
+repo_root=""
+if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+	repo_root="$GITHUB_WORKSPACE"
+else
+	if command -v git >/dev/null 2>&1; then
+		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+	fi
+fi
+[[ -n $repo_root ]] || die "Could not determine repository's top-level directory."
+
+pubspec="$repo_root/pubspec.yaml"
+[[ -f $pubspec ]] || die "pubspec.yaml not found at: $pubspec"
+
+# Read current
+version_line="$(grep -E '^[[:space:]]*version[[:space:]]*:' "$pubspec" | head -n 1 || true)"
+[[ -n $version_line ]] || die "Could not find a 'version:' line in pubspec.yaml"
+
+current_version="$(sed -E 's/^[[:space:]]*version[[:space:]]*:[[:space:]]*([^[:space:]#]+).*/\1/' <<<"$version_line")"
+if [[ ! $current_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\+([0-9]+)$ ]]; then
+	die "Current pubspec version must match X.Y.Z+N (got: '$current_version')"
+fi
+
+cur_core="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+cur_build="${BASH_REMATCH[4]}"
+
+if [[ $new_core == "$cur_core" ]]; then
+	if [[ $fail_on_same == "true" ]]; then
+		die "Requested version equals current core ($cur_core); refusing due to --fail-on-same"
+	fi
+	if [[ $bump_on_same == "false" ]]; then
+		# Silent no-op (pipeline-friendly)
+		exit 0
+	fi
+fi
+
+next_build=$((cur_build + 1))
+new_version="${new_core}+${next_build}"
+
+tmp="$(mktemp)"
+awk -v newver="$new_version" '
+  BEGIN { done=0 }
+  {
+    if (!done && $0 ~ /^[[:space:]]*version[[:space:]]*:/) {
+      match($0, /^[[:space:]]*version[[:space:]]*:[[:space:]]*/)
+      prefix = substr($0, RSTART, RLENGTH)
+      rest = substr($0, RLENGTH + 1)
+      sub(/^[^[:space:]#]+/, newver, rest)
+      print prefix rest
+      done=1
+      next
+    }
+    print
+  }
+  END { if (!done) exit 3 }
+' "$pubspec" >"$tmp" || {
+	rc=$?
+	[[ $rc -eq 3 ]] && die "Failed to update: no version line found during rewrite"
+	die "Failed to update pubspec.yaml (awk exit $rc)"
+}
+
+mv "$tmp" "$pubspec"
+printf 'Updated pubspec.yaml:\n  %s  ->  %s\n' "$current_version" "$new_version"
