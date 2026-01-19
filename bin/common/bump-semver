@@ -153,12 +153,12 @@ validate_build() {
 	return 0
 }
 
-if [[ $want_prerelease == "true" ]]; then
-	[[ -n $prerelease_val ]] || die "--prerelease must not be empty"
+# If flags are provided with an empty string (e.g. --build ""), treat as "not set".
+# This supports CI patterns like: --build "${{ inputs.build_meta }}"
+if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
 	validate_prerelease "$prerelease_val" || die "Invalid --prerelease value: '$prerelease_val'"
 fi
-if [[ $want_build == "true" ]]; then
-	[[ -n $build_val ]] || die "--build must not be empty"
+if [[ $want_build == "true" && -n $build_val ]]; then
 	validate_build "$build_val" || die "Invalid --build value: '$build_val'"
 fi
 
@@ -190,10 +190,10 @@ set)
 esac
 
 out="${new_major}.${new_minor}.${new_patch}"
-if [[ $want_prerelease == "true" ]]; then
+if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
 	out="${out}-${prerelease_val}"
 fi
-if [[ $want_build == "true" ]]; then
+if [[ $want_build == "true" && -n $build_val ]]; then
 	out="${out}+${build_val}"
 fi
 
