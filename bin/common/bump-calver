@@ -164,7 +164,8 @@ apply_calver_format() {
 	printf '%s\n' "$out"
 }
 
-format="YYYY.MM.DD"
+default_format="YYYY.MM.DD"
+format=""
 positional=()
 
 while [[ $# -gt 0 ]]; do
@@ -186,6 +187,12 @@ while [[ $# -gt 0 ]]; do
 		;;
 	esac
 done
+
+# Normalize format: empty or whitespace-only means "use default"
+format="$(printf '%s' "$format" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+if [[ -z $format ]]; then
+	format="$default_format"
+fi
 
 [[ ${#positional[@]} -le 1 ]] || die "At most one DATE argument may be provided"
 
