@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Usage:
+  bump-calver [--format FMT] [DATE]
+
+Reads a date from stdin OR a positional DATE argument (not both).
+If no DATE is provided, uses the current date in UTC.
+
+Default output:
+  YYYY.MM.DD  (e.g. 2026.01.23)
+
+Accepted DATE forms (interpreted as a calendar date, validated):
+  - YYYY-MM-DD
+  - YYYY.MM.DD
+  - YYYY/MM/DD
+  - YYYYMMDD
+
+Optional formatting:
+  --format FMT
+
+Supported CalVer tokens in FMT:
+  YYYY  Full year            (e.g. 2006, 2016, 2106)
+  YY    Short year           (year % 1000, no padding: 6, 16, 106)
+  0Y    Zero-padded year     (min 2 digits: 06, 16, 106)
+  MM    Short month          (1..12)
+  0M    Zero-padded month    (01..12)
+  WW    Short week (ISO)     (1..53)
+  0W    Zero-padded week     (01..53)
+  DD    Short day            (1..31)
+  0D    Zero-padded day      (01..31)
+
+Notes:
+  - Week number uses ISO-8601 weeks (01..53) for portability.
+  - All operations use UTC.
+
+Examples:
+  bump-calver
+  bump-calver 2026-01-23
+  echo "20260123" | bump-calver
+  bump-calver --format 'YYYY.0M.0D' 2026/1/3
+  bump-calver --format 'YYYY-0W' 2026-01-23
+EOF
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+is_gnu_date() {
+	# GNU date supports: date --version
+	date --version >/dev/null 2>&1
+}
+
+# Format a validated YYYY-MM-DD date in UTC using strftime format.
+date_utc_fmt_ymd() {
+	local ymd="$1"
+	local fmt="$2"
+
+	if is_gnu_date; then
+		# GNU date: -u -d
+		date -u -d "$ymd" +"$fmt"
+	else
+		# BSD date (macOS): -u -j -f
+		date -u -j -f "%Y-%m-%d" "$ymd" +"$fmt"
+	fi
+}
+
+# Validate a candidate YYYY-MM-DD by round-tripping through date.
+validate_ymd() {
+	local ymd="$1"
+	local out=""
+
+	# date should fail (non-zero) for invalid calendar dates on both GNU/BSD
+	out="$(date_utc_fmt_ymd "$ymd" "%Y-%m-%d")" || return 1
+	[[ $out == "$ymd" ]] || return 1
+	return 0
+}
+
+# Normalize supported input forms to YYYY-MM-DD (with basic numeric checks).
+normalize_input_to_ymd() {
+	local raw="$1"
+	raw="$(printf '%s' "$raw" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+	[[ -n $raw ]] || die "Empty date input"
+
+	local y="" m="" d=""
+
+	if [[ $raw =~ ^([0-9]{4})[-./]([0-9]{1,2})[-./]([0-9]{1,2})$ ]]; then
+		y="${BASH_REMATCH[1]}"
+		m="${BASH_REMATCH[2]}"
+		d="${BASH_REMATCH[3]}"
+	elif [[ $raw =~ ^([0-9]{4})([0-9]{2})([0-9]{2})$ ]]; then
+		y="${BASH_REMATCH[1]}"
+		m="${BASH_REMATCH[2]}"
+		d="${BASH_REMATCH[3]}"
+	else
+		die "Unsupported date format: '$raw' (expected YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD, or YYYYMMDD)"
+	fi
+
+	[[ $m =~ ^[0-9]+$ && $d =~ ^[0-9]+$ ]] || die "Invalid numeric date: '$raw'"
+
+	# Use arithmetic context for base-10 normalization (avoids octal interpretation)
+	local yi mi di
+	yi=$((10#$y))
+	mi=$((10#$m))
+	di=$((10#$d))
+
+	((mi >= 1 && mi <= 12)) || die "Invalid month in date: '$raw'"
+	((di >= 1 && di <= 31)) || die "Invalid day in date: '$raw'"
+
+	printf '%04d-%02d-%02d' "$yi" "$mi" "$di"
+}
+
+apply_calver_format() {
+	local ymd="$1"
+	local fmt="$2"
+
+	# Extract components in UTC
+	local Y M D W
+	Y="$(date_utc_fmt_ymd "$ymd" "%Y")"
+	M="$(date_utc_fmt_ymd "$ymd" "%m")"
+	D="$(date_utc_fmt_ymd "$ymd" "%d")"
+	W="$(date_utc_fmt_ymd "$ymd" "%V")" # ISO week number (01..53)
+
+	# CalVer token values
+	local tok_YYYY="$Y"
+
+	local year_mod=$((10#$Y % 1000))
+	local tok_YY="$year_mod"
+	local tok_0Y
+	tok_0Y="$(printf '%02d' "$year_mod")"
+
+	local month_int=$((10#$M))
+	local day_int=$((10#$D))
+	local week_int=$((10#$W))
+
+	local tok_MM="$month_int"
+	local tok_0M
+	tok_0M="$(printf '%02d' "$month_int")"
+
+	local tok_DD="$day_int"
+	local tok_0D
+	tok_0D="$(printf '%02d' "$day_int")"
+
+	local tok_WW="$week_int"
+	local tok_0W
+	tok_0W="$(printf '%02d' "$week_int")"
+
+	# Replace longest tokens first to avoid collisions
+	local out="$fmt"
+	out="${out//YYYY/$tok_YYYY}"
+	out="${out//0Y/$tok_0Y}"
+	out="${out//YY/$tok_YY}"
+	out="${out//0M/$tok_0M}"
+	out="${out//MM/$tok_MM}"
+	out="${out//0W/$tok_0W}"
+	out="${out//WW/$tok_WW}"
+	out="${out//0D/$tok_0D}"
+	out="${out//DD/$tok_DD}"
+
+	printf '%s\n' "$out"
+}
+
+format="YYYY.MM.DD"
+positional=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--format)
+		shift
+		[[ $# -gt 0 ]] || die "--format requires an argument"
+		format="$1"
+		shift
+		;;
+	--*) die "Unknown option: $1" ;;
+	*)
+		positional+=("$1")
+		shift
+		;;
+	esac
+done
+
+[[ ${#positional[@]} -le 1 ]] || die "At most one DATE argument may be provided"
+
+# Read stdin or positional (not both)
+stdin_has_data="false"
+stdin_content=""
+if [[ ! -t 0 ]]; then
+	stdin_content="$(cat || true)"
+	if [[ -n ${stdin_content//$'\n'/} ]] && [[ -n ${stdin_content//[[:space:]]/} ]]; then
+		stdin_has_data="true"
+	fi
+fi
+
+if [[ ${#positional[@]} -eq 1 && $stdin_has_data == "true" ]]; then
+	die "Provide date via stdin OR positional argument, not both"
+fi
+
+input_date=""
+if [[ ${#positional[@]} -eq 1 ]]; then
+	input_date="${positional[0]}"
+elif [[ $stdin_has_data == "true" ]]; then
+	# First non-empty line
+	input_date="$(printf '%s' "$stdin_content" | awk 'NF { print $0; exit }')"
+else
+	input_date="" # means "now"
+fi
+
+ymd=""
+if [[ -z $input_date ]]; then
+	# Current date in UTC
+	ymd="$(date -u +%Y-%m-%d)"
+else
+	ymd="$(normalize_input_to_ymd "$input_date")"
+	validate_ymd "$ymd" || die "Invalid calendar date: '$input_date' (normalized to '$ymd')"
+fi
+
+apply_calver_format "$ymd" "$format"
