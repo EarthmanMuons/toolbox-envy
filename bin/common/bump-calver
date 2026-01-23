@@ -164,6 +164,7 @@ apply_calver_format() {
 	printf '%s\n' "$out"
 }
 
+# Broad SemVer compatibility (no zero-padding)
 default_format="YYYY.MM.DD"
 format=""
 positional=()
