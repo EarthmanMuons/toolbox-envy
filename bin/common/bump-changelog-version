@@ -136,25 +136,47 @@ fi
 # Detect whether tags are prefixed with "v" by inspecting the existing version repository links.
 tag_prefix="$(
 	awk '
-    # Consider only reference-style link definitions: [Name]: URL
-    /^\[[^]]+\]:[[:space:]]+/ {
-      url=$2
-
-      # If any existing link uses v-prefixed tags, assume v-prefix for tags.
-      # Supports both /compare/ and /commits/ styles.
+    function inspect_url(url) {
+      # v-prefixed compare
       if (url ~ /\/compare\/v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*\.\.\./) { print "v"; exit 0 }
+      # v-prefixed commits
       if (url ~ /\/commits\/v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/)     { print "v"; exit 0 }
 
-      # Otherwise, if we see an unprefixed tag form, record that fact but keep scanning
-      # in case a later link uses v.
+      # Record that we saw unprefixed forms (not used to output anything today, but kept for clarity)
       if (url ~ /\/compare\/[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*\.\.\./) { saw_unpref=1 }
       if (url ~ /\/commits\/[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/)      { saw_unpref=1 }
     }
+
+    BEGIN { expect_url=0 }
+
+    # Start of a reference-style link definition.
+    /^\[[^]]+\]:/ {
+      expect_url = 0
+
+      # If URL is on the same line, inspect it.
+      if ($0 ~ /^\[[^]]+\]:[[:space:]]+https?:\/\//) {
+        inspect_url($2)
+        next
+      }
+
+      # Otherwise, expect a continuation URL on the next non-empty line.
+      expect_url = 1
+      next
+    }
+
+    # Continuation line for a wrapped reference link.
+    expect_url {
+      if ($0 ~ /^[[:space:]]*$/) next
+      url=$0
+      gsub(/^[[:space:]]+/, "", url)
+      gsub(/[[:space:]]+$/, "", url)
+      if (url ~ /^https?:\/\//) inspect_url(url)
+      expect_url = 0
+    }
+
     END {
-      # If we didn'\''t find v-prefixed tags, default to empty (unprefixed).
-      # If we found neither style, also default to empty; generation will still work.
-      if (saw_unpref) print ""
-      else print ""
+      # If we did not find any v-prefixed tags, default to empty.
+      print ""
     }
   ' "$changelog"
 )"
@@ -162,10 +184,42 @@ tag_prefix="$(
 # Extract [Unreleased]: URL (use split on whitespace)
 unreleased_url="$(
 	awk '
-    /^\[Unreleased\]:[[:space:]]+/ { print $2; exit 0; }
-  ' "$changelog"
+    # Match the definition line. It might be:
+    #   [Unreleased]: https://...
+    # or (Prettier-wrapped):
+    #   [Unreleased]:
+    #     https://...
+    /^\[Unreleased\]:/ {
+      # If URL is on the same line, print it.
+      if ($0 ~ /^\[Unreleased\]:[[:space:]]+https?:\/\//) {
+        print $2
+        exit 0
+      }
+
+      # Otherwise, read forward to find the next non-empty line and treat it as the URL.
+      # (Typically it will be indented.)
+      while ((getline nextline) > 0) {
+        # Skip blank/whitespace-only lines.
+        if (nextline ~ /^[[:space:]]*$/) continue
+
+        # Strip leading/trailing whitespace.
+        gsub(/^[[:space:]]+/, "", nextline)
+        gsub(/[[:space:]]+$/, "", nextline)
+
+        # Accept only http(s) URLs as the continuation.
+        if (nextline ~ /^https?:\/\//) {
+          print nextline
+          exit 0
+        }
+
+        # If the very next non-empty line is not a URL, bail.
+        exit 1
+      }
+      exit 1
+    }
+  ' "$changelog" || true
 )"
-[[ -n $unreleased_url ]] || die "Could not find a reference link line like: [Unreleased]: <url>"
+[[ -n $unreleased_url ]] || die "Could not find a reference link for [Unreleased]"
 
 # Derive repo base URL: https://host/OWNER/REPO
 repo_base="$(printf '%s\n' "$unreleased_url" | sed -E 's#^(https?://[^/]+/[^/]+/[^/]+).*$#\1#')"
@@ -185,10 +239,18 @@ awk -v newv="$new_version" \
   BEGIN {
     did_rewrite_headings = 0;
     did_unreleased_link = 0;
+    skip_next_unreleased_url = 0;
+  }
+
+  # If we replaced a wrapped [Unreleased]: and the next line is the indented URL,
+  # skip it so we do not leave a dangling URL behind.
+  skip_next_unreleased_url {
+    if ($0 ~ /^[[:space:]]+https?:\/\//) { skip_next_unreleased_url = 0; next }
+    skip_next_unreleased_url = 0
+    # fall through and process the line normally
   }
 
   # Rewrite the existing Unreleased heading:
-  # print new Unreleased heading, blank line, then release heading.
   /^##[[:space:]]+\[Unreleased\][[:space:]]*$/ && !did_rewrite_headings {
     print "## [Unreleased]";
     print "";
@@ -197,11 +259,17 @@ awk -v newv="$new_version" \
     next;
   }
 
-  # Replace [Unreleased] link and insert new version link immediately after it.
-  /^\[Unreleased\]:[[:space:]]+/ && !did_unreleased_link {
+  # Replace [Unreleased] link (single-line or wrapped) and insert new version link immediately after it.
+  /^\[Unreleased\]:/ && !did_unreleased_link {
     print "[Unreleased]: " new_unrel_link;
     print "[" newv "]: " new_ver_link;
     did_unreleased_link = 1;
+
+    # If the original line did NOT contain a URL, it was probably wrapped and
+    # the next line is the URL continuation. Skip it if so.
+    if ($0 !~ /^\[Unreleased\]:[[:space:]]+https?:\/\//) {
+      skip_next_unreleased_url = 1
+    }
     next;
   }
 
