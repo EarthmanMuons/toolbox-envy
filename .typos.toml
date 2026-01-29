@@ -1,0 +1,7 @@
+[default]
+locale = "en-us"
+
+# Don't correct these false positives
+ 
+[default.extend-words]
+UDID = "UDID"

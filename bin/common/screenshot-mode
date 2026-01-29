@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Canonical screenshot mode for iOS Simulator and Android emulators.
+
+Commands:
+  apply   Apply a canonical screenshot state.
+  reset   Clear/restore state (best-effort on Android).
+  clear   Alias for reset.
+
+Usage:
+  screenshot-mode apply --platform ios     [--device DEVICE] [--dry-run]
+  screenshot-mode reset --platform ios     [--device DEVICE] [--dry-run]
+  screenshot-mode apply --platform android [--serial SERIAL] [--dry-run]
+  screenshot-mode reset --platform android [--serial SERIAL] [--dry-run]
+  screenshot-mode (-h|--help)
+
+Required:
+  -p, --platform PLATFORM   One of: ios, android
+
+Options:
+  -n, --dry-run             Print the command(s) without running them.
+
+  --device DEVICE           iOS only. simctl device selector. Default: booted
+                            (Examples: booted, <UDID>)
+
+  -s, --serial SERIAL       Android only. adb device serial. (Examples: emulator-5554)
+
+Notes:
+- iOS uses:    xcrun simctl status_bar <device> override|clear
+- Android uses adb to standardize emulator state (time, battery, airplane+wifi,
+  immersive mode, animations, heads-up notifications).
+- Android reset is best-effort and may vary by image/OS version.
+
+Examples:
+  screenshot-mode apply --platform ios
+  screenshot-mode reset --platform ios --device booted
+  screenshot-mode apply --platform android
+  screenshot-mode apply --platform android --serial emulator-5554
+EOF
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
+}
+
+# iOS status bar
+IOS_TIME="9:41"
+IOS_WIFI_BARS="3"
+IOS_CELLULAR_BARS="4"
+IOS_BATTERY_LEVEL="100"
+IOS_BATTERY_STATE="discharging"
+
+# Android emulator state
+ANDROID_TIME_HHMM="09:41"
+ANDROID_DATE_YMD="2026-01-29"
+ANDROID_BATTERY_LEVEL="100"
+ANDROID_BATTERY_STATUS="3" # 3 = discharging
+
+# Convert YYYY-MM-DD + HH:MM -> MMDDhhmmYYYY for `adb shell date`
+android_adb_date() {
+	local ymd="$1" hm="$2"
+	printf '%s%s%s%s%s' \
+		"${ymd:5:2}" \
+		"${ymd:8:2}" \
+		"${hm:0:2}" \
+		"${hm:3:2}" \
+		"${ymd:0:4}"
+}
+
+[[ $# -ge 1 ]] || {
+	usage
+	exit 1
+}
+
+CMD="$1"
+shift
+
+PLATFORM=""
+DRY_RUN="0"
+
+IOS_DEVICE="booted"
+ANDROID_SERIAL=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-p | --platform)
+		[[ $# -ge 2 ]] || die "--platform requires a value"
+		PLATFORM="$2"
+		shift 2
+		;;
+	-n | --dry-run)
+		DRY_RUN="1"
+		shift
+		;;
+	--device)
+		[[ $# -ge 2 ]] || die "--device requires a value"
+		IOS_DEVICE="$2"
+		shift 2
+		;;
+	-s | --serial)
+		[[ $# -ge 2 ]] || die "--serial requires a value"
+		ANDROID_SERIAL="$2"
+		shift 2
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		die "Unknown option: $1"
+		;;
+	*)
+		die "Unexpected argument: $1"
+		;;
+	esac
+done
+
+[[ -n $PLATFORM ]] || die "--platform is required (ios|android)"
+
+case "$PLATFORM" in
+ios | android) ;;
+*)
+	die "--platform must be one of: ios, android (got: $PLATFORM)"
+	;;
+esac
+
+# Enforce platform-scoped flags
+if [[ $PLATFORM == "ios" && -n $ANDROID_SERIAL ]]; then
+	die "--serial is Android-only; use --device for iOS"
+fi
+if [[ $PLATFORM == "android" && $IOS_DEVICE != "booted" ]]; then
+	die "--device is iOS-only; use --serial for Android"
+fi
+
+ios_run() {
+	# Usage: ios_run <args...>
+	local -a cmd=(xcrun simctl status_bar "$IOS_DEVICE")
+	cmd+=("$@")
+
+	if [[ $DRY_RUN == "1" ]]; then
+		printf '%q ' "${cmd[@]}"
+		printf '\n'
+	else
+		"${cmd[@]}"
+	fi
+}
+
+ios_apply() {
+	[[ $DRY_RUN == "1" ]] || need_cmd xcrun
+	ios_run override \
+		--time "$IOS_TIME" \
+		--wifiBars "$IOS_WIFI_BARS" \
+		--cellularBars "$IOS_CELLULAR_BARS" \
+		--batteryLevel "$IOS_BATTERY_LEVEL" \
+		--batteryState "$IOS_BATTERY_STATE"
+	[[ $DRY_RUN == "1" ]] || echo "Applied iOS screenshot mode to simulator: $IOS_DEVICE"
+}
+
+ios_reset() {
+	[[ $DRY_RUN == "1" ]] || need_cmd xcrun
+	ios_run clear
+	[[ $DRY_RUN == "1" ]] || echo "Cleared iOS screenshot mode for simulator: $IOS_DEVICE"
+}
+
+android_run() {
+	# Usage: android_run <args...>
+	local -a cmd=(adb)
+	[[ -n $ANDROID_SERIAL ]] && cmd+=(-s "$ANDROID_SERIAL")
+	cmd+=("$@")
+
+	if [[ $DRY_RUN == "1" ]]; then
+		printf '%q ' "${cmd[@]}"
+		printf '\n'
+	else
+		"${cmd[@]}"
+	fi
+}
+
+android_apply() {
+	[[ $DRY_RUN == "1" ]] || need_cmd adb
+
+	# 1) Fixed time/date (emulator-friendly)
+	android_run shell date "$(android_adb_date "$ANDROID_DATE_YMD" "$ANDROID_TIME_HHMM")" || true
+
+	# 2) Battery: unplugged, 100%, discharging
+	android_run shell dumpsys battery unplug
+	android_run shell dumpsys battery set level "$ANDROID_BATTERY_LEVEL"
+	android_run shell dumpsys battery set status "$ANDROID_BATTERY_STATUS"
+
+	# 3) Stable network icons: airplane ON, Wi-Fi ON
+	android_run shell settings put global airplane_mode_on 1
+	android_run shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true
+	android_run shell svc wifi enable
+
+	# 4) Hide system chrome
+	android_run shell settings put global policy_control immersive.full='*' || true
+
+	# 5) Disable animations
+	android_run shell settings put global window_animation_scale 0
+	android_run shell settings put global transition_animation_scale 0
+	android_run shell settings put global animator_duration_scale 0
+
+	# 6) Disable heads-up notifications
+	android_run shell settings put global heads_up_notifications_enabled 0 || true
+
+	[[ $DRY_RUN == "1" ]] || echo "Applied Android screenshot mode."
+}
+
+android_reset() {
+	[[ $DRY_RUN == "1" ]] || need_cmd adb
+
+	android_run shell dumpsys battery reset || true
+
+	android_run shell settings put global airplane_mode_on 0 || true
+	android_run shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false || true
+	android_run shell svc wifi enable || true
+
+	android_run shell settings put global policy_control null || true
+
+	android_run shell settings put global window_animation_scale 1 || true
+	android_run shell settings put global transition_animation_scale 1 || true
+	android_run shell settings put global animator_duration_scale 1 || true
+
+	android_run shell settings put global heads_up_notifications_enabled 1 || true
+
+	[[ $DRY_RUN == "1" ]] || echo "Reset Android screenshot mode (best-effort)."
+}
+
+case "$CMD" in
+apply)
+	if [[ $PLATFORM == "ios" ]]; then
+		ios_apply
+	else
+		android_apply
+	fi
+	;;
+reset | clear)
+	if [[ $PLATFORM == "ios" ]]; then
+		ios_reset
+	else
+		android_reset
+	fi
+	;;
+-h | --help)
+	usage
+	;;
+*)
+	die "Unknown command: $CMD"
+	;;
+esac
