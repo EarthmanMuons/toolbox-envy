@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Set or clear iOS Simulator status bar overrides for consistent screenshots.
+
+Usage:
+  ios-screenshot-mode apply [--device DEVICE] [--dry-run]
+  ios-screenshot-mode reset [--device DEVICE] [--dry-run]
+  ios-screenshot-mode (-h|--help)
+
+Options:
+  -d, --device DEVICE   Target device. Default: booted (or pass a simulator UDID)
+  -n, --dry-run         Print the simctl command(s) without running them
+  -h, --help            Show this help
+EOF
+}
+
+die() {
+	echo "Error: $*" >&2
+	echo >&2
+	usage
+	exit 1
+}
+
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
+}
+
+# Canonical screenshot status bar settings.
+SB_TIME="9:41"
+SB_WIFI_BARS="3"
+SB_CELLULAR_BARS="4"
+SB_BATTERY_LEVEL="100"
+SB_BATTERY_STATE="discharging"
+
+DEVICE="booted"
+DRY_RUN="0"
+
+[[ $# -ge 1 ]] || {
+	usage
+	exit 1
+}
+
+CMD="$1"
+shift
+
+parse_common_flags() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-d | --device)
+			[[ $# -ge 2 ]] || die "--device requires a value"
+			DEVICE="$2"
+			shift 2
+			;;
+		-n | --dry-run)
+			DRY_RUN="1"
+			shift
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			die "Unexpected argument: $1"
+			;;
+		esac
+	done
+}
+
+need_cmd xcrun
+
+case "$CMD" in
+apply)
+	parse_common_flags "$@"
+
+	args=(
+		xcrun simctl status_bar "$DEVICE" override
+		--time "$SB_TIME"
+		--wifiBars "$SB_WIFI_BARS"
+		--cellularBars "$SB_CELLULAR_BARS"
+		--batteryLevel "$SB_BATTERY_LEVEL"
+		--batteryState "$SB_BATTERY_STATE"
+	)
+
+	if [[ $DRY_RUN == "1" ]]; then
+		printf 'Dry run:\n  %q' "${args[@]}"
+		printf '\n'
+	else
+		"${args[@]}"
+		echo "Applied status bar overrides to simulator: $DEVICE"
+	fi
+	;;
+
+reset | clear)
+	parse_common_flags "$@"
+
+	args=(xcrun simctl status_bar "$DEVICE" clear)
+
+	if [[ $DRY_RUN == "1" ]]; then
+		printf 'Dry run:\n  %q' "${args[@]}"
+		printf '\n'
+	else
+		"${args[@]}"
+		echo "Cleared status bar overrides for simulator: $DEVICE"
+	fi
+	;;
+
+-h | --help)
+	usage
+	;;
+
+*)
+	die "Unknown command: $CMD"
+	;;
+esac
