@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'USAGE'
+Usage:
+  create-sha256sums [--dist <dir>]
+
+Create sha256sums.txt for all regular files in the dist directory.
+USAGE
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+dist_dir="dist"
+
+while (($#)); do
+	case "$1" in
+	--dist)
+		shift
+		dist_dir="${1-}"
+		[[ -n $dist_dir ]] || die "--dist requires a value"
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*) die "Unknown argument: $1" ;;
+	esac
+	shift
+done
+
+[[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
+
+pushd "$dist_dir" >/dev/null
+trap 'popd >/dev/null || true' RETURN
+
+files=()
+for f in *; do
+	[[ -f $f ]] || continue
+	[[ $f == "sha256sums.txt" ]] && continue
+	files+=("$f")
+done
+
+if ((${#files[@]} == 0)); then
+	die "No files found in: $dist_dir"
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+	LC_ALL=C printf '%s\n' "${files[@]}" | sort | xargs -n 1000 sha256sum -- >sha256sums.txt
+elif command -v shasum >/dev/null 2>&1; then
+	LC_ALL=C printf '%s\n' "${files[@]}" | sort | xargs -n 1000 shasum -a 256 -- >sha256sums.txt
+else
+	die "Need sha256sum or shasum to generate SHA-256 checksums."
+fi
+
+printf "wrote %s/sha256sums.txt for %s file(s)\n" "$dist_dir" "${#files[@]}" >&2

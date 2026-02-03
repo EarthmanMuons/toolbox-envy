@@ -6,7 +6,7 @@ usage() {
 Usage:
   stage-release-assets --slug <slug> [--tag <tag>] [--dist <dir>]
 
-Stage Flutter release assets into dist/ with deterministic names + sha256sums.txt.
+Stage Flutter release assets into dist/ with deterministic names.
 EOF
 }
 
@@ -14,7 +14,6 @@ die() {
 	printf "ERROR: %s\n" "$*" >&2
 	exit 1
 }
-info() { printf "INFO: %s\n" "$*" >&2; }
 
 repo_root=""
 if [[ -n ${GITHUB_WORKSPACE-} ]]; then
@@ -81,33 +80,46 @@ cd "$repo_root"
 
 aab_src="build/app/outputs/bundle/release/app-release.aab"
 apk_src="build/app/outputs/flutter-apk/app-release.apk"
-
-[[ -f $aab_src ]] || die "AAB not found at: $aab_src"
-[[ -f $apk_src ]] || die "APK not found at: $apk_src"
+ipa_pattern="build/ios/ipa/*.ipa"
 
 mkdir -p -- "$dist_dir"
 
 aab_file="${slug}-${tag}.aab"
 apk_file="${slug}-${tag}.apk"
-aab_dst="${dist_dir}/${aab_file}"
-apk_dst="${dist_dir}/${apk_file}"
+ipa_file="${slug}-${tag}.ipa"
 
-cp -v -- "$aab_src" "$aab_dst"
-cp -v -- "$apk_src" "$apk_dst"
-
-# Produce checksum file with bare filenames (run from within dist).
-pushd "$dist_dir" >/dev/null
-trap 'popd >/dev/null || true' RETURN
-
-if command -v sha256sum >/dev/null 2>&1; then
-	sha256sum -- "$aab_file" "$apk_file" >sha256sums.txt
-elif command -v shasum >/dev/null 2>&1; then
-	shasum -a 256 -- "$aab_file" "$apk_file" >sha256sums.txt
+if [[ -f $aab_src ]]; then
+	aab_dst="${dist_dir}/${aab_file}"
 else
-	die "Need sha256sum or shasum to generate SHA-256 checksums."
+	printf "(missing) %s\n" "$aab_src" >&2
 fi
 
-info "Prepared assets in: $dist_dir"
-info "  $aab_file"
-info "  $apk_file"
-info "  sha256sums.txt"
+if [[ -f $apk_src ]]; then
+	apk_dst="${dist_dir}/${apk_file}"
+else
+	printf "(missing) %s\n" "$apk_src" >&2
+fi
+
+shopt -s nullglob
+ipa_matches=(build/ios/ipa/*.ipa)
+shopt -u nullglob
+
+if ((${#ipa_matches[@]} == 1)); then
+	ipa_dst="${dist_dir}/${ipa_file}"
+elif ((${#ipa_matches[@]} == 0)); then
+	printf "(missing) %s\n" "$ipa_pattern" >&2
+else
+	die "Multiple IPA files found: ${ipa_matches[*]}"
+fi
+
+if [[ -f $aab_src ]]; then
+	cp -v -- "$aab_src" "$aab_dst" >&2
+fi
+
+if [[ -f $apk_src ]]; then
+	cp -v -- "$apk_src" "$apk_dst" >&2
+fi
+
+if ((${#ipa_matches[@]} == 1)); then
+	cp -v -- "${ipa_matches[0]}" "$ipa_dst" >&2
+fi
