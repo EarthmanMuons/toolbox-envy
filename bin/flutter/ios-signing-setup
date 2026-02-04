@@ -7,28 +7,31 @@ Usage:
   ios-signing-setup
 
 Sets up iOS signing for CI by:
-- Decoding the signing cert (P12) and optional provisioning profile
+- Decoding the signing cert (P12) and provisioning profile
 - Creating and configuring an ephemeral keychain
 - Importing the signing cert and granting non-interactive access
-- Installing the provisioning profile (if provided)
+- Installing the provisioning profile
 
 Required environment variables:
- IOS_SIGNING_CERT_B64        Base64-encoded P12 signing certificate
- IOS_SIGNING_CERT_PASSWORD   Password for the P12
- IOS_KEYCHAIN_PASSWORD       Password for the ephemeral keychain
+ IOS_SIGNING_CERT_B64          Base64-encoded P12 signing certificate
+ IOS_SIGNING_CERT_PASSWORD     Password for the P12
+ IOS_PROVISIONING_PROFILE_B64  Base64-encoded .mobileprovision
+ IOS_KEYCHAIN_PASSWORD         Password for the ephemeral keychain
 
-Optional:
- IOS_PROVISIONING_PROFILE_B64 Base64-encoded .mobileprovision
- IOS_KEYCHAIN_PATH            Default: ${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db
- IOS_KEYCHAIN_TIMEOUT         Default: 21600 (seconds)
- IOS_SIGNING_CLEANUP          Default: 1 (set to 0 to keep keychain/profile)
 EOF
 }
 
-[[ $# -eq 0 ]] || {
+case "${1:-}" in
+"") ;;
+-h | --help)
+	usage
+	exit 0
+	;;
+*)
 	usage
 	exit 1
-}
+	;;
+esac
 
 die() {
 	printf "ERROR: %s\n" "$*" >&2
@@ -62,38 +65,17 @@ cd "$repo_root"
 
 require_env IOS_SIGNING_CERT_B64
 require_env IOS_SIGNING_CERT_PASSWORD
+require_env IOS_PROVISIONING_PROFILE_B64
 require_env IOS_KEYCHAIN_PASSWORD
 
-IOS_KEYCHAIN_PATH="${IOS_KEYCHAIN_PATH:-${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db}"
-IOS_KEYCHAIN_TIMEOUT="${IOS_KEYCHAIN_TIMEOUT:-21600}"
-IOS_SIGNING_CLEANUP="${IOS_SIGNING_CLEANUP:-1}"
+IOS_KEYCHAIN_PATH="${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db"
+IOS_KEYCHAIN_TIMEOUT="21600"
 
+# Temp dir only stages decoded cert/profile and derived plist. Xcode reads from
+# the keychain and installed profile, so temp files can be deleted on exit.
 tmp_dir="$(mktemp -d)"
-prev_default="$(security default-keychain | sed -E 's/^"|"$//g' || true)"
-prev_list=()
-while IFS= read -r line; do
-	prev_list+=("$line")
-done < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"$//')
-install_path=""
 cleanup() {
 	rm -rf "$tmp_dir"
-	if [[ -n ${prev_default:-} ]]; then
-		security default-keychain -s "$prev_default" >/dev/null 2>&1 || true
-	fi
-	if ((${#prev_list[@]} > 0)); then
-		security list-keychains -d user -s "${prev_list[@]}" >/dev/null 2>&1 || true
-	fi
-	if [[ $IOS_SIGNING_CLEANUP == 1 ]]; then
-		security delete-keychain "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1 || true
-		if [[ -n ${install_path:-} ]]; then
-			rm -f "$install_path" || true
-		fi
-	else
-		printf '%s skipping cleanup; leaving keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
-		if [[ -n ${install_path:-} ]]; then
-			printf '%s skipping cleanup; leaving profile at %s\n' "$log_prefix" "$install_path"
-		fi
-	fi
 }
 trap cleanup EXIT
 
@@ -113,13 +95,10 @@ umask 077
 printf '%s' "$IOS_SIGNING_CERT_B64" | decode_base64 >"$cert_path"
 chmod 600 "$cert_path"
 
-profile_path=""
-if [[ -n ${IOS_PROVISIONING_PROFILE_B64:-} ]]; then
-	profile_path="$tmp_dir/profile.mobileprovision"
-	printf '%s decoding provisioning profile\n' "$log_prefix"
-	printf '%s' "$IOS_PROVISIONING_PROFILE_B64" | decode_base64 >"$profile_path"
-	chmod 600 "$profile_path"
-fi
+profile_path="$tmp_dir/profile.mobileprovision"
+printf '%s decoding provisioning profile\n' "$log_prefix"
+printf '%s' "$IOS_PROVISIONING_PROFILE_B64" | decode_base64 >"$profile_path"
+chmod 600 "$profile_path"
 
 if security show-keychain-info "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1; then
 	printf '%s deleting existing keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
