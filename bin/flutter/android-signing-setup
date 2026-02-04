@@ -73,15 +73,13 @@ ANDROID_KEYSTORE_PATH="$ANDROID_SIGNING_DIR/$ANDROID_KEYSTORE_FILENAME"
 ANDROID_KEY_PROPERTIES_PATH="$ANDROID_SIGNING_DIR/key.properties"
 ANDROID_SIGNING_FORCE_DECODE="${ANDROID_SIGNING_FORCE_DECODE:-}"
 
+# Reads base64 from stdin, writes decoded bytes to stdout.
 decode_base64() {
-	# Reads base64 from stdin, writes decoded bytes to stdout.
-	# GNU coreutils uses --decode or -d; macOS/BSD uses -D.
-	if base64 --help 2>/dev/null | grep -q -- '--decode'; then
-		base64 --decode
-	elif base64 --help 2>/dev/null | grep -q -- ' -d'; then
-		base64 -d
-	else
+	# macOS/BSD uses -D; GNU coreutils uses --decode.
+	if base64 -D </dev/null >/dev/null 2>&1; then
 		base64 -D
+	else
+		base64 --decode
 	fi
 }
 
