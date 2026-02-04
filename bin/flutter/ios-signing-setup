@@ -152,6 +152,16 @@ security default-keychain
 if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
 	printf '%s code signing identities:\n' "$log_prefix"
 	security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
+
+	# TEMPORARY SMOKE TEST
+	printf '%s codesign smoke test\n' "$log_prefix"
+	tmp="$tmp_dir/codesign-smoke"
+	mkdir -p "$tmp"
+	echo test >"$tmp/file"
+	codesign --force --timestamp=none \
+		--keychain "$IOS_KEYCHAIN_PATH" \
+		-s "Apple Distribution: Aaron Bull Schaefer (6ZR326Y3XC)" \
+		"$tmp/file"
 fi
 
 if [[ -n $profile_path ]]; then
