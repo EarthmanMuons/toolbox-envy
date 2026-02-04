@@ -155,4 +155,19 @@ if [[ -n $profile_path ]]; then
 	chmod 600 "$install_path"
 fi
 
+if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
+	printf '%s diagnostics: build settings (filtered)\n' "$log_prefix" >&2
+	if ! (
+		cd ios/
+		xcodebuild -showBuildSettings \
+			-workspace Runner.xcworkspace \
+			-scheme Runner \
+			-configuration Release | grep -E 'CODE_SIGN_STYLE|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM' 1>&2
+	); then
+		printf '%s diagnostics: unable to fetch build settings (non-fatal)\n' "$log_prefix" >&2
+	fi
+else
+	printf '%s diagnostics: ios/Runner.xcworkspace not found, skipping\n' "$log_prefix" >&2
+fi
+
 printf '%s signing configuration ready\n' "$log_prefix"
