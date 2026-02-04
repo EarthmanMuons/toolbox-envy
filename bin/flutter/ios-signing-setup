@@ -61,6 +61,9 @@ set +x 2>/dev/null || true
 log_prefix="[ios-signing]"
 printf '%s configuring iOS signing\n' "$log_prefix"
 
+wwdr_url="https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+wwdr_cer_filename="AppleWWDRCAG3.cer"
+
 cd "$repo_root"
 
 require_env IOS_SIGNING_CERT_B64
@@ -117,6 +120,18 @@ printf '%s setting keychain as default for this job\n' "$log_prefix"
 security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
 security default-keychain -s "$IOS_KEYCHAIN_PATH"
 
+wwdr_cer="$tmp_dir/$wwdr_cer_filename"
+
+printf '%s fetching WWDR intermediate (G3)\n' "$log_prefix"
+curl -fsSL -o "$wwdr_cer" "$wwdr_url"
+
+printf '%s importing WWDR intermediate into keychain\n' "$log_prefix"
+security import "$wwdr_cer" \
+	-k "$IOS_KEYCHAIN_PATH" \
+	-T /usr/bin/codesign \
+	-T /usr/bin/security \
+	-T /usr/bin/xcodebuild
+
 printf '%s importing signing cert into keychain\n' "$log_prefix"
 security import "$cert_path" \
 	-k "$IOS_KEYCHAIN_PATH" \
@@ -128,6 +143,9 @@ security import "$cert_path" \
 printf '%s granting key access to Apple tools\n' "$log_prefix"
 security set-key-partition-list -S apple-tool:,apple: -s \
 	-k "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+
+printf '%s diagnostics: code signing identities\n' "$log_prefix"
+security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
 
 if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
 	printf '%s keychains:\n' "$log_prefix"
