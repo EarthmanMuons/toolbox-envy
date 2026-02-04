@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Usage:
+  ios-signing-setup
+
+Sets up iOS signing for CI by:
+- Decoding the signing cert (P12) and optional provisioning profile
+- Creating and configuring an ephemeral keychain
+- Importing the signing cert and granting non-interactive access
+- Installing the provisioning profile (if provided)
+
+Required environment variables:
+ IOS_SIGNING_CERT_B64        Base64-encoded P12 signing certificate
+ IOS_SIGNING_CERT_PASSWORD   Password for the P12
+ IOS_KEYCHAIN_PASSWORD       Password for the ephemeral keychain
+
+Optional:
+ IOS_PROVISIONING_PROFILE_B64 Base64-encoded .mobileprovision
+ IOS_KEYCHAIN_PATH            Default: ${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db
+ IOS_KEYCHAIN_TIMEOUT         Default: 21600 (seconds)
+EOF
+}
+
+[[ $# -eq 0 ]] || {
+	usage
+	exit 1
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+require_env() {
+	local name="$1"
+	[[ -n ${!name:-} ]] || die "missing required env var: $name"
+}
+
+repo_root=""
+if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+	repo_root=$GITHUB_WORKSPACE
+else
+	if command -v git >/dev/null 2>&1; then
+		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+	fi
+fi
+[[ -n $repo_root ]] || die "Could not determine repository's top-level directory"
+
+##### MAIN
+
+# Prevent accidental secret echoing if caller enabled xtrace.
+set +x 2>/dev/null || true
+
+log_prefix="[ios-signing]"
+printf '%s configuring iOS signing\n' "$log_prefix"
+
+cd "$repo_root"
+
+require_env IOS_SIGNING_CERT_B64
+require_env IOS_SIGNING_CERT_PASSWORD
+require_env IOS_KEYCHAIN_PASSWORD
+
+IOS_KEYCHAIN_PATH="${IOS_KEYCHAIN_PATH:-${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db}"
+IOS_KEYCHAIN_TIMEOUT="${IOS_KEYCHAIN_TIMEOUT:-21600}"
+
+tmp_dir="$(mktemp -d)"
+prev_default="$(security default-keychain | sed -E 's/^"|"$//g' || true)"
+mapfile -t prev_list < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"$//')
+cleanup() {
+	rm -rf "$tmp_dir"
+	if [[ -n ${prev_default:-} ]]; then
+		security default-keychain -s "$prev_default" >/dev/null 2>&1 || true
+	fi
+	if ((${#prev_list[@]} > 0)); then
+		security list-keychains -d user -s "${prev_list[@]}" >/dev/null 2>&1 || true
+	fi
+	security delete-keychain "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# Reads base64 from stdin, writes decoded bytes to stdout.
+decode_base64() {
+	# macOS/BSD uses -D; GNU coreutils uses --decode.
+	if base64 -D </dev/null >/dev/null 2>&1; then
+		base64 -D
+	else
+		base64 --decode
+	fi
+}
+
+cert_path="$tmp_dir/signing.p12"
+printf '%s decoding signing cert\n' "$log_prefix"
+umask 077
+printf '%s' "$IOS_SIGNING_CERT_B64" | decode_base64 >"$cert_path"
+chmod 600 "$cert_path"
+
+profile_path=""
+if [[ -n ${IOS_PROVISIONING_PROFILE_B64:-} ]]; then
+	profile_path="$tmp_dir/profile.mobileprovision"
+	printf '%s decoding provisioning profile\n' "$log_prefix"
+	printf '%s' "$IOS_PROVISIONING_PROFILE_B64" | decode_base64 >"$profile_path"
+	chmod 600 "$profile_path"
+fi
+
+if security show-keychain-info "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1; then
+	printf '%s deleting existing keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
+	security delete-keychain "$IOS_KEYCHAIN_PATH" || true
+fi
+if [[ -f $IOS_KEYCHAIN_PATH ]]; then
+	rm -f "$IOS_KEYCHAIN_PATH"
+fi
+
+printf '%s creating keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
+security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+security set-keychain-settings -lut "$IOS_KEYCHAIN_TIMEOUT" "$IOS_KEYCHAIN_PATH"
+security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+
+printf '%s setting keychain as default for this job\n' "$log_prefix"
+security list-keychains -d user -s "$IOS_KEYCHAIN_PATH"
+security default-keychain -s "$IOS_KEYCHAIN_PATH"
+
+printf '%s importing signing cert into keychain\n' "$log_prefix"
+security import "$cert_path" \
+	-k "$IOS_KEYCHAIN_PATH" \
+	-P "$IOS_SIGNING_CERT_PASSWORD" \
+	-T /usr/bin/codesign \
+	-T /usr/bin/security \
+	-T /usr/bin/xcodebuild
+
+printf '%s granting key access to Apple tools\n' "$log_prefix"
+security set-key-partition-list -S apple-tool:,apple: -s \
+	-k "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+
+if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
+	printf '%s keychains:\n' "$log_prefix"
+	security list-keychains -d user
+	printf '%s identities:\n' "$log_prefix"
+	security find-identity -p codesigning "$IOS_KEYCHAIN_PATH" || true
+fi
+
+if [[ -n $profile_path ]]; then
+	profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+	mkdir -p "$profiles_dir"
+
+	profile_plist="$tmp_dir/profile.plist"
+	security cms -D -i "$profile_path" >"$profile_plist"
+	profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist" 2>/dev/null || true)"
+
+	if [[ -n $profile_uuid ]]; then
+		install_path="$profiles_dir/$profile_uuid.mobileprovision"
+	else
+		install_path="$profiles_dir/profile.mobileprovision"
+	fi
+
+	printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
+	cp -f "$profile_path" "$install_path"
+	chmod 600 "$install_path"
+fi
+
+printf '%s signing configuration ready\n' "$log_prefix"
