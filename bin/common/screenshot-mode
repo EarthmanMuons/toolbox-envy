@@ -188,54 +188,113 @@ android_run() {
 	fi
 }
 
+android_try() {
+	# Best-effort Android command; suppress errors/noise in non-dry-run mode.
+	local -a cmd=(adb)
+	[[ -n $ANDROID_SERIAL ]] && cmd+=(-s "$ANDROID_SERIAL")
+	cmd+=("$@")
+
+	if [[ $DRY_RUN == "1" ]]; then
+		printf '%q ' "${cmd[@]}"
+		printf '\n'
+	else
+		"${cmd[@]}" >/dev/null 2>&1
+	fi
+}
+
+android_note_fail() {
+	local label="$1"
+	ANDROID_FAILS+=("$label")
+}
+
 android_apply() {
 	[[ $DRY_RUN == "1" ]] || need_cmd adb
+	ANDROID_FAILS=()
 
 	# 1) Fixed time/date (emulator-friendly)
-	android_run shell date "$(android_adb_date "$ANDROID_DATE_YMD" "$ANDROID_TIME_HHMM")" || true
+	if ! android_try shell su 0 date "$(android_adb_date "$ANDROID_DATE_YMD" "$ANDROID_TIME_HHMM")"; then
+		if ! android_try shell su -c "date $(android_adb_date "$ANDROID_DATE_YMD" "$ANDROID_TIME_HHMM")"; then
+			android_try shell date "$(android_adb_date "$ANDROID_DATE_YMD" "$ANDROID_TIME_HHMM")" ||
+				android_note_fail "time (needs root?)"
+		fi
+	fi
 
 	# 2) Battery: unplugged, 100%, discharging
-	android_run shell dumpsys battery unplug
-	android_run shell dumpsys battery set level "$ANDROID_BATTERY_LEVEL"
-	android_run shell dumpsys battery set status "$ANDROID_BATTERY_STATUS"
+	android_run shell dumpsys battery unplug || android_note_fail "battery unplug"
+	android_run shell dumpsys battery set level "$ANDROID_BATTERY_LEVEL" || android_note_fail "battery level"
+	android_run shell dumpsys battery set status "$ANDROID_BATTERY_STATUS" || android_note_fail "battery status"
 
-	# 3) Stable network icons: airplane ON, Wi-Fi ON
-	android_run shell settings put global airplane_mode_on 1
-	android_run shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true
-	android_run shell svc wifi enable
+	# 2b) Full cellular signal (emulator console)
+	android_try emu gsm signal 31 || android_note_fail "gsm signal"
+	android_try emu gsm voice home || android_note_fail "gsm voice"
+	android_try emu gsm data home || android_note_fail "gsm data"
+
+	# 3) Stable network icons: airplane OFF, Wi-Fi ON
+	android_try shell cmd connectivity airplane-mode disable || android_note_fail "airplane mode (cmd)"
+	android_run shell settings put global airplane_mode_on 0 || android_note_fail "airplane mode (settings)"
+	android_run shell svc wifi enable || android_note_fail "wifi enable"
 
 	# 4) Hide system chrome
-	android_run shell settings put global policy_control immersive.full='*' || true
+	android_run shell settings put global policy_control immersive.full='*' ||
+		android_note_fail "immersive mode"
 
 	# 5) Disable animations
-	android_run shell settings put global window_animation_scale 0
-	android_run shell settings put global transition_animation_scale 0
-	android_run shell settings put global animator_duration_scale 0
+	android_run shell settings put global window_animation_scale 0 || android_note_fail "window animation"
+	android_run shell settings put global transition_animation_scale 0 || android_note_fail "transition animation"
+	android_run shell settings put global animator_duration_scale 0 || android_note_fail "animator duration"
 
 	# 6) Disable heads-up notifications
-	android_run shell settings put global heads_up_notifications_enabled 0 || true
+	android_run shell settings put global heads_up_notifications_enabled 0 ||
+		android_note_fail "heads-up notifications"
 
-	[[ $DRY_RUN == "1" ]] || echo "Applied Android screenshot mode."
+	if [[ $DRY_RUN == "1" ]]; then
+		return
+	fi
+
+	if [[ ${#ANDROID_FAILS[@]} -gt 0 ]]; then
+		echo "Applied Android screenshot mode (with failures):"
+		printf '  - %s\n' "${ANDROID_FAILS[@]}"
+		echo "Tip: time changes require a userdebug/eng emulator (adb root)."
+	else
+		echo "Applied Android screenshot mode."
+	fi
 }
 
 android_reset() {
 	[[ $DRY_RUN == "1" ]] || need_cmd adb
+	ANDROID_FAILS=()
 
-	android_run shell dumpsys battery reset || true
+	android_run shell dumpsys battery reset || android_note_fail "battery reset"
 
-	android_run shell settings put global airplane_mode_on 0 || true
-	android_run shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false || true
-	android_run shell svc wifi enable || true
+	if android_try shell cmd connectivity airplane-mode disable; then
+		android_run shell settings put global airplane_mode_on 0 || android_note_fail "airplane mode (settings)"
+	else
+		android_note_fail "airplane mode (cmd)"
+		android_run shell settings put global airplane_mode_on 0 || android_note_fail "airplane mode (settings)"
+		android_try shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false ||
+			android_note_fail "airplane mode (broadcast)"
+	fi
+	android_run shell svc wifi enable || android_note_fail "wifi enable"
 
-	android_run shell settings put global policy_control null || true
+	android_run shell settings put global policy_control null || android_note_fail "immersive mode reset"
 
-	android_run shell settings put global window_animation_scale 1 || true
-	android_run shell settings put global transition_animation_scale 1 || true
-	android_run shell settings put global animator_duration_scale 1 || true
+	android_run shell settings put global window_animation_scale 1 || android_note_fail "window animation"
+	android_run shell settings put global transition_animation_scale 1 || android_note_fail "transition animation"
+	android_run shell settings put global animator_duration_scale 1 || android_note_fail "animator duration"
 
-	android_run shell settings put global heads_up_notifications_enabled 1 || true
+	android_run shell settings put global heads_up_notifications_enabled 1 ||
+		android_note_fail "heads-up notifications"
 
-	[[ $DRY_RUN == "1" ]] || echo "Reset Android screenshot mode (best-effort)."
+	if [[ $DRY_RUN == "1" ]]; then
+		return
+	fi
+
+	if [[ ${#ANDROID_FAILS[@]} -gt 0 ]]; then
+		echo "Reset Android screenshot mode (with failures):"
+		printf '  - %s\n' "${ANDROID_FAILS[@]}"
+	else
+		echo "Reset Android screenshot mode (best-effort)."
+	fi
 }
 
 case "$CMD" in
