@@ -43,6 +43,16 @@ require_env() {
 	[[ -n ${!name:-} ]] || die "missing required env var: $name"
 }
 
+emit_output() {
+	local key="$1"
+	local value="$2"
+
+	# GitHub Actions: write step outputs if requested.
+	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+		printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
+	fi
+}
+
 repo_root=""
 if [[ -n ${GITHUB_WORKSPACE-} ]]; then
 	repo_root=$GITHUB_WORKSPACE
@@ -120,6 +130,8 @@ printf '%s setting keychain as default for this job\n' "$log_prefix"
 security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
 security default-keychain -s "$IOS_KEYCHAIN_PATH"
 
+emit_output "keychain_path" "$IOS_KEYCHAIN_PATH"
+
 wwdr_cer="$tmp_dir/$wwdr_cer_filename"
 
 printf '%s fetching WWDR intermediate (G3)\n' "$log_prefix"
@@ -152,16 +164,6 @@ security default-keychain
 if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
 	printf '%s code signing identities:\n' "$log_prefix"
 	security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
-
-	# TEMPORARY SMOKE TEST
-	printf '%s codesign smoke test\n' "$log_prefix"
-	tmp="$tmp_dir/codesign-smoke"
-	mkdir -p "$tmp"
-	echo test >"$tmp/file"
-	codesign --force --timestamp=none \
-		--keychain "$IOS_KEYCHAIN_PATH" \
-		-s "Apple Distribution: Aaron Bull Schaefer (6ZR326Y3XC)" \
-		"$tmp/file"
 fi
 
 if [[ -n $profile_path ]]; then
@@ -181,6 +183,11 @@ if [[ -n $profile_path ]]; then
 	printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
 	cp -f "$profile_path" "$install_path"
 	chmod 600 "$install_path"
+
+	if [[ -n $profile_uuid ]]; then
+		emit_output "provisioning_profile_uuid" "$profile_uuid"
+		emit_output "provisioning_profile_path" "$install_path"
+	fi
 fi
 
 if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
