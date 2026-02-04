@@ -43,7 +43,10 @@ action_path="${GITHUB_ACTION_PATH:-}"
 toolbox_root="$(cd "$action_path/../../.." && pwd -P)"
 
 # Normalize list: comma or newline separated, trimmed.
-mapfile -t bins < <(printf "%s\n" "$include_bins_raw" |
+bins=()
+while IFS= read -r line; do
+	bins+=("$line")
+done < <(printf "%s\n" "$include_bins_raw" |
 	tr ',' '\n' |
 	sed 's/^[[:space:]]*//; s/[[:space:]]*$//' |
 	sed '/^$/d')
