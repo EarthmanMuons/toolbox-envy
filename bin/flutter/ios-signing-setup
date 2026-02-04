@@ -70,7 +70,10 @@ IOS_SIGNING_CLEANUP="${IOS_SIGNING_CLEANUP:-1}"
 
 tmp_dir="$(mktemp -d)"
 prev_default="$(security default-keychain | sed -E 's/^"|"$//g' || true)"
-mapfile -t prev_list < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"$//')
+prev_list=()
+while IFS= read -r line; do
+	prev_list+=("$line")
+done < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"$//')
 install_path=""
 cleanup() {
 	rm -rf "$tmp_dir"
