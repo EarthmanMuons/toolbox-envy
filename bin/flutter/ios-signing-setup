@@ -144,14 +144,14 @@ printf '%s granting key access to Apple tools\n' "$log_prefix"
 security set-key-partition-list -S apple-tool:,apple: -s \
 	-k "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
 
-printf '%s diagnostics: code signing identities\n' "$log_prefix"
-security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
+printf '%s keychain search list:\n' "$log_prefix"
+security list-keychains -d user
+printf '%s default keychain:\n' "$log_prefix"
+security default-keychain
 
 if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
-	printf '%s keychains:\n' "$log_prefix"
-	security list-keychains -d user
-	printf '%s identities:\n' "$log_prefix"
-	security find-identity -p codesigning "$IOS_KEYCHAIN_PATH" || true
+	printf '%s code signing identities:\n' "$log_prefix"
+	security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
 fi
 
 if [[ -n $profile_path ]]; then
