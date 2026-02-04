@@ -114,7 +114,7 @@ security set-keychain-settings -lut "$IOS_KEYCHAIN_TIMEOUT" "$IOS_KEYCHAIN_PATH"
 security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
 
 printf '%s setting keychain as default for this job\n' "$log_prefix"
-security list-keychains -d user -s "$IOS_KEYCHAIN_PATH"
+security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
 security default-keychain -s "$IOS_KEYCHAIN_PATH"
 
 printf '%s importing signing cert into keychain\n' "$log_prefix"
