@@ -9,7 +9,7 @@ Usage:
 Sets up iOS signing for CI by:
 - Decoding the signing cert (P12) and provisioning profile
 - Creating and configuring an ephemeral keychain
-- Importing the signing cert and granting non-interactive access
+- Importing the WWDR intermediate and signing cert, granting non-interactive access
 - Installing the provisioning profile
 
 Required environment variables:
@@ -17,6 +17,16 @@ Required environment variables:
  IOS_SIGNING_CERT_PASSWORD     Password for the P12
  IOS_PROVISIONING_PROFILE_B64  Base64-encoded .mobileprovision
  IOS_KEYCHAIN_PASSWORD         Password for the ephemeral keychain
+
+Optional environment variables:
+ IOS_KEYCHAIN_PATH             Keychain path (default: ${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db)
+ IOS_KEYCHAIN_TIMEOUT          Keychain timeout seconds (default: 21600)
+ IOS_SIGNING_DEBUG             Set to 1 for extra diagnostics (default: 0)
+
+Outputs (GitHub Actions, via GITHUB_OUTPUT):
+ keychain_path
+ provisioning_profile_uuid
+ provisioning_profile_path
 
 EOF
 }
@@ -81,10 +91,10 @@ require_env IOS_SIGNING_CERT_PASSWORD
 require_env IOS_PROVISIONING_PROFILE_B64
 require_env IOS_KEYCHAIN_PASSWORD
 
-IOS_KEYCHAIN_PATH="${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db"
-IOS_KEYCHAIN_TIMEOUT="21600"
+IOS_KEYCHAIN_PATH="${IOS_KEYCHAIN_PATH:-${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db}"
+IOS_KEYCHAIN_TIMEOUT="${IOS_KEYCHAIN_TIMEOUT:-21600}"
 
-# Temp dir only stages decoded cert/profile and derived plist. Xcode reads from
+# Temp dir only stages decoded cert/profile and derived plist/json. Xcode reads from
 # the keychain and installed profile, so temp files can be deleted on exit.
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -103,14 +113,20 @@ decode_base64() {
 }
 
 normalize_serial() {
-	local serial="$1"
-
-	serial="${serial#serial=}"
-	serial="$(printf '%s' "$serial" | tr '[:lower:]' '[:upper:]')"
-	# Drop leading zeros for stable comparison.
-	serial="$(printf '%s' "$serial" | sed 's/^0*//')"
-	printf '%s' "$serial"
+	local s="$1"
+	s="${s#serial=}"
+	# Keep only hex chars, uppercase, drop leading zeros.
+	# Force C locale to avoid "Illegal byte sequence" on macOS.
+	s="$(printf '%s' "$s" | LC_ALL=C tr -cd '0-9a-fA-F')"
+	s="$(printf '%s' "$s" | LC_ALL=C tr 'a-f' 'A-F')"
+	s="$(printf '%s' "$s" | LC_ALL=C sed 's/^0*//')"
+	printf '%s' "$s"
 }
+
+openssl_pkcs12_legacy_args=()
+if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+	openssl_pkcs12_legacy_args=(-legacy)
+fi
 
 cert_path="$tmp_dir/signing.p12"
 printf '%s decoding signing cert\n' "$log_prefix"
@@ -126,51 +142,49 @@ chmod 600 "$profile_path"
 profile_plist="$tmp_dir/profile.plist"
 security cms -D -i "$profile_path" >"$profile_plist"
 
+profile_json="$tmp_dir/profile.json"
+plutil -convert json -o "$profile_json" "$profile_plist"
+
 printf '%s verifying signing cert matches provisioning profile\n' "$log_prefix"
+
+# Extract serial from the leaf cert inside the P12.
 p12_serial_raw="$(
-	openssl pkcs12 -in "$cert_path" -clcerts -nokeys \
+	openssl pkcs12 "${openssl_pkcs12_legacy_args[@]}" \
+		-in "$cert_path" -clcerts -nokeys \
 		-passin "pass:$IOS_SIGNING_CERT_PASSWORD" 2>/dev/null |
 		openssl x509 -noout -serial 2>/dev/null || true
 )"
 p12_serial="$(normalize_serial "$p12_serial_raw")"
 [[ -n $p12_serial ]] || die "unable to extract serial from signing cert"
 
+# Extract DeveloperCertificates from the profile JSON (they are base64 strings).
+if ! command -v jq >/dev/null 2>&1; then
+	die "jq is required for provisioning profile verification (install jq or disable the check)"
+fi
+
+mapfile -t profile_cert_b64s < <(jq -r '.DeveloperCertificates[]? // empty' "$profile_json")
+[[ ${#profile_cert_b64s[@]} -gt 0 ]] || die "no DeveloperCertificates found in provisioning profile"
+
 profile_serials=()
 profile_match=0
-profile_index=0
-while true; do
-	profile_cert_hex="$(/usr/libexec/PlistBuddy -c "Print :DeveloperCertificates:$profile_index" "$profile_plist" 2>/dev/null || true)"
-	if [[ -z $profile_cert_hex ]]; then
+
+for i in "${!profile_cert_b64s[@]}"; do
+	cert_der="$tmp_dir/profile-cert-$i.der"
+	printf '%s' "${profile_cert_b64s[$i]}" | decode_base64 >"$cert_der" ||
+		die "unable to decode DeveloperCertificates[$i] (base64)"
+
+	serial_raw="$(openssl x509 -inform DER -in "$cert_der" -noout -serial 2>/dev/null || true)"
+	serial="$(normalize_serial "$serial_raw")"
+	[[ -n $serial ]] || continue
+
+	profile_serials+=("$serial")
+	if [[ $serial == "$p12_serial" ]]; then
+		profile_match=1
 		break
 	fi
-
-	profile_cert_hex="$(printf '%s' "$profile_cert_hex" | tr -d '<> \n\t')"
-	if [[ -z $profile_cert_hex ]]; then
-		profile_index=$((profile_index + 1))
-		continue
-	fi
-
-	profile_cert_path="$tmp_dir/profile-cert-$profile_index.der"
-	printf '%s' "$profile_cert_hex" | xxd -r -p >"$profile_cert_path" ||
-		die "unable to decode DeveloperCertificates entry $profile_index"
-
-	profile_serial_raw="$(openssl x509 -inform der -noout -serial -in "$profile_cert_path" 2>/dev/null || true)"
-	profile_serial="$(normalize_serial "$profile_serial_raw")"
-	if [[ -n $profile_serial ]]; then
-		profile_serials+=("$profile_serial")
-		if [[ $profile_serial == "$p12_serial" ]]; then
-			profile_match=1
-			break
-		fi
-	fi
-
-	profile_index=$((profile_index + 1))
 done
 
 if [[ $profile_match -ne 1 ]]; then
-	if [[ ${#profile_serials[@]} -eq 0 ]]; then
-		die "no DeveloperCertificates found in provisioning profile"
-	fi
 	die "signing cert serial ($p12_serial) does not match any DeveloperCertificates serials (${profile_serials[*]})"
 fi
 
@@ -227,27 +241,25 @@ if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
 	security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
 fi
 
-if [[ -n $profile_path ]]; then
-	profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
-	mkdir -p "$profiles_dir"
+profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+mkdir -p "$profiles_dir"
 
-	profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist" 2>/dev/null || true)"
+profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist" 2>/dev/null || true)"
 
-	if [[ -n $profile_uuid ]]; then
-		install_path="$profiles_dir/$profile_uuid.mobileprovision"
-	else
-		install_path="$profiles_dir/profile.mobileprovision"
-	fi
+if [[ -n $profile_uuid ]]; then
+	install_path="$profiles_dir/$profile_uuid.mobileprovision"
+else
+	install_path="$profiles_dir/profile.mobileprovision"
+fi
 
-	printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
-	cp -f "$profile_path" "$install_path"
-	[[ -f $install_path ]] || die "provisioning profile copy failed: $install_path"
-	chmod 600 "$install_path"
+printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
+cp -f "$profile_path" "$install_path"
+[[ -f $install_path ]] || die "provisioning profile copy failed: $install_path"
+chmod 600 "$install_path"
 
-	if [[ -n $profile_uuid ]]; then
-		emit_output "provisioning_profile_uuid" "$profile_uuid"
-		emit_output "provisioning_profile_path" "$install_path"
-	fi
+if [[ -n $profile_uuid ]]; then
+	emit_output "provisioning_profile_uuid" "$profile_uuid"
+	emit_output "provisioning_profile_path" "$install_path"
 fi
 
 if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
@@ -257,7 +269,8 @@ if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
 		xcodebuild -showBuildSettings \
 			-workspace Runner.xcworkspace \
 			-scheme Runner \
-			-configuration Release | grep -E 'CODE_SIGN_STYLE|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM' 1>&2
+			-configuration Release |
+			grep -E 'CODE_SIGN_STYLE|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM' 1>&2
 	); then
 		printf '%s diagnostics: unable to fetch build settings (non-fatal)\n' "$log_prefix" >&2
 	fi
