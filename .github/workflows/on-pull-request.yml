@@ -8,6 +8,9 @@ on:
     types:
       - checks_requested
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -16,6 +19,7 @@ jobs:
   detect_changed_files:
     name: detect changed files
     permissions:
+      contents: read
       pull-requests: read
     uses: EarthmanMuons/reusable-workflows/.github/workflows/detect-changed-files.yml@main
 
