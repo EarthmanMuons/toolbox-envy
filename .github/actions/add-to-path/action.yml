@@ -17,9 +17,13 @@ runs:
   using: "composite"
   steps:
     - shell: bash
+      env:
+        INPUTS_INCLUDE_BINS: ${{ inputs.include_bins }}
+        INPUTS_PROJECT_BIN: ${{ inputs.project_bin }}
+        INPUTS_WRITE_SUMMARY: ${{ inputs.write_summary }}
       run: |
         set -euo pipefail
         bash "${{ github.action_path }}/add-to-path.sh" \
-          --include-bins "${{ inputs.include_bins }}" \
-          --project-bin "${{ inputs.project_bin }}" \
-          --write-summary "${{ inputs.write_summary }}"
+          --include-bins "${INPUTS_INCLUDE_BINS}" \
+          --project-bin "${INPUTS_PROJECT_BIN}" \
+          --write-summary "${INPUTS_WRITE_SUMMARY}"
