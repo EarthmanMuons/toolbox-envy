@@ -6,6 +6,9 @@ checkout of this repository.
 
 The action is designed to be simple, strict, and predictable.
 
+Toolbox Envy actions are intentionally consumed from `@main` as a rolling,
+first-party CI utility rather than via pinned releases.
+
 ---
 
 ## What It Does
@@ -24,7 +27,7 @@ downloads at runtime.
 
 ```yaml
 - name: Add Toolbox Envy to PATH
-  uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
+  uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@main
   with:
     include_bins: |
       common
@@ -48,20 +51,3 @@ newline- or comma-separated; invalid names will fail the job.
 
 PATH resolution is left-to-right. If you provide `project_bin`, it is added
 first so project scripts override scripts from Toolbox Envy with the same name.
-
-### Version Pinning
-
-Recommended:
-
-```
-@v1
-```
-
-For maximum reproducibility, pin to a commit SHA instead.
-
-## Design Philosophy
-
-- No hidden fallbacks
-- No silent skips
-- No implicit installs
-- One step, predictable PATH behavior
