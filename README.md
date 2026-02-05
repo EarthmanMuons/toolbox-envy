@@ -89,11 +89,14 @@ _.path = [
 
 ### Remote CI (GitHub Actions)
 
+Toolbox Envy is intentionally consumed from `@main` as a rolling, shared set of
+first-party CI utilities.
+
 Expose Toolbox Envy tools directly in workflows using the built-in action:
 
 ```yaml
 - name: Add Toolbox Envy to PATH
-  uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@v1
+  uses: EarthmanMuons/toolbox-envy/.github/actions/add-to-path@main
   with:
     include_bins: |
       common
