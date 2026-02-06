@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+Usage:
+  get-project-version [<package-name>]
+
+Reads the version for a Rust package in the current repository using `cargo metadata`.
+
+Examples:
+  get-project-version my-crate
+  get-project-version
+  echo my-crate | get-project-version
+EOF
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+main() {
+	if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+		usage
+		exit 0
+	fi
+
+	[[ $# -le 1 ]] || {
+		usage
+		die "expected at most one argument: <package-name>"
+	}
+
+	local pkg="${1:-}"
+	if [[ -z $pkg && ! -t 0 ]]; then
+		IFS= read -r pkg || true
+		pkg="${pkg//$'\r'/}"
+		pkg="$(printf '%s' "$pkg" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+	fi
+
+	command -v cargo >/dev/null 2>&1 || die "cargo is required"
+	command -v jq >/dev/null 2>&1 || die "jq is required"
+
+	local repo_root=""
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		repo_root=$GITHUB_WORKSPACE
+	else
+		if command -v git >/dev/null 2>&1; then
+			repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+		fi
+	fi
+	[[ -n $repo_root ]] || die "Could not determine repository's top-level directory."
+
+	local manifest="$repo_root/Cargo.toml"
+	[[ -f $manifest ]] || die "Cargo.toml not found at: $manifest"
+
+	local metadata=""
+	metadata="$(cargo metadata --no-deps --format-version=1 --manifest-path "$manifest")"
+
+	if [[ -z $pkg ]]; then
+		local pkg_count=""
+		pkg_count="$(jq -r '.packages | length' <<<"$metadata")"
+		if [[ $pkg_count == "1" ]]; then
+			pkg="$(jq -r '.packages[0].name' <<<"$metadata")"
+		else
+			die "multiple packages detected; please provide <package-name>"
+		fi
+	fi
+
+	local version=""
+	version="$(
+		jq -r --arg pkg "$pkg" '
+        .packages[]
+        | select(.name == $pkg)
+        | .version
+      ' <<<"$metadata" | head -n 1
+	)"
+
+	[[ -n $version ]] || die "Package '$pkg' not found in cargo metadata"
+
+	printf '%s\n' "$version"
+}
+
+main "$@"
