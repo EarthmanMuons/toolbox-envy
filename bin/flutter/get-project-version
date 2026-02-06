@@ -14,10 +14,30 @@ else
 		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 	fi
 fi
-[[ -n $repo_root ]] || die "Could not determine repository's top-level directory."
+if [[ -n $repo_root ]]; then
+	repo_root="$(cd "$repo_root" && pwd -P)"
+fi
 
-pubspec="$repo_root/pubspec.yaml"
-[[ -f $pubspec ]] || die "pubspec.yaml not found at: $pubspec"
+pubspec=""
+current_dir=""
+current_dir="$(pwd -P)"
+dir="$current_dir"
+while :; do
+	if [[ -f "$dir/pubspec.yaml" ]]; then
+		pubspec="$dir/pubspec.yaml"
+		break
+	fi
+	if [[ -n $repo_root && $dir == "$repo_root" ]]; then
+		break
+	fi
+	parent="$(cd "$dir/.." && pwd -P)"
+	if [[ $parent == "$dir" ]]; then
+		break
+	fi
+	dir="$parent"
+done
+
+[[ -n $pubspec ]] || die "pubspec.yaml not found between $current_dir and ${repo_root:-filesystem root}."
 
 version_line="$(grep -E '^[[:space:]]*version[[:space:]]*:' "$pubspec" | head -n 1 || true)"
 [[ -n $version_line ]] || die "Could not find a 'version:' line in pubspec.yaml"
