@@ -16,7 +16,7 @@ EOF
 }
 
 die() {
-	printf "ERROR: %s\n" "$*" >&2
+	printf "ERROR: %b\n" "$*" >&2
 	exit 1
 }
 
@@ -63,7 +63,9 @@ main() {
 		if [[ $pkg_count == "1" ]]; then
 			pkg="$(jq -r '.packages[0].name' <<<"$metadata")"
 		else
-			die "multiple packages detected; please provide <package-name>"
+			local pkg_list=""
+			pkg_list="$(jq -r '.packages[].name' <<<"$metadata" | sort)"
+			die "multiple packages detected; please provide <package-name>. Available packages:\n$pkg_list"
 		fi
 	fi
 
