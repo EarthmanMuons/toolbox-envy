@@ -18,6 +18,12 @@ Required environment variables:
  IOS_PROVISIONING_PROFILE_B64  Base64-encoded .mobileprovision
  IOS_KEYCHAIN_PASSWORD         Password for the ephemeral keychain
 
+Notes:
+ In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
+   - keychain_path
+ If a provisioning profile UUID is available, also emits the following step outputs:
+   - provisioning_profile_uuid
+   - provisioning_profile_path
 EOF
 }
 
