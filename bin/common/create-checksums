@@ -4,9 +4,13 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  create-sha256sums [--dist <dir>]
+  create-checksums [--dir <dir>]
 
-Create sha256sums.txt for all regular files in the dist directory.
+Create sha256sums.txt for all regular files in the assets directory.
+
+Options:
+  -d, --dir   Directory containing the assets (default: dist)
+  -h, --help  Show this help message.
 USAGE
 }
 
@@ -19,10 +23,10 @@ dist_dir="dist"
 
 while (($#)); do
 	case "$1" in
-	--dist)
+	-d | --dir)
 		shift
 		dist_dir="${1-}"
-		[[ -n $dist_dir ]] || die "--dist requires a value"
+		[[ -n $dist_dir ]] || die "--dir requires a value"
 		;;
 	-h | --help)
 		usage
@@ -36,7 +40,7 @@ done
 [[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
 
 pushd "$dist_dir" >/dev/null
-trap 'popd >/dev/null || true' RETURN
+trap 'popd >/dev/null || true' EXIT
 
 files=()
 for f in *; do
@@ -45,14 +49,17 @@ for f in *; do
 	files+=("$f")
 done
 
-if ((${#files[@]} == 0)); then
-	die "No files found in: $dist_dir"
-fi
+((${#files[@]} > 0)) || die "No files found in: $dist_dir"
 
+# Output format must remain: "<hash><two spaces><filename>" (GNU sha256sum compatible)
 if command -v sha256sum >/dev/null 2>&1; then
-	LC_ALL=C printf '%s\n' "${files[@]}" | sort | xargs -n 1000 sha256sum -- >sha256sums.txt
+	LC_ALL=C printf '%s\n' "${files[@]}" | sort | while IFS= read -r f; do
+		sha256sum -- "$f"
+	done >sha256sums.txt
 elif command -v shasum >/dev/null 2>&1; then
-	LC_ALL=C printf '%s\n' "${files[@]}" | sort | xargs -n 1000 shasum -a 256 -- >sha256sums.txt
+	LC_ALL=C printf '%s\n' "${files[@]}" | sort | while IFS= read -r f; do
+		shasum -a 256 -- "$f"
+	done >sha256sums.txt
 else
 	die "Need sha256sum or shasum to generate SHA-256 checksums."
 fi

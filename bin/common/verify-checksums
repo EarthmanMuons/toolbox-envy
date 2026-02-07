@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'USAGE'
+Usage:
+  verify-checksums --pattern <glob> [--dir <dir>] [--checksums <file>] [--output-prefix <prefix>]
+
+Verify a single asset's SHA-256 checksum against a checksums file.
+
+Options:
+  -p, --pattern         Glob pattern to match exactly one asset file (required)
+  -d, --dir             Directory containing the assets (default: dist)
+  -c, --checksums       Checksums file name (default: sha256sums.txt)
+  -o, --output-prefix   Output prefix for CI (default: asset)
+  -h, --help            Show this help message.
+
+Notes:
+  - In CI (when GITHUB_OUTPUT is set), emits <prefix>_name and <prefix>_path.
+USAGE
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+emit_output() {
+	local key="$1"
+	local value="$2"
+
+	# GitHub Actions: write step outputs if requested.
+	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+		printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
+	fi
+}
+
+dist_dir="dist"
+pattern=""
+checksums_file="sha256sums.txt"
+output_prefix="asset"
+
+while (($#)); do
+	case "$1" in
+	-d | --dir)
+		shift
+		dist_dir="${1-}"
+		[[ -n $dist_dir ]] || die "--dir requires a value"
+		;;
+	-p | --pattern)
+		shift
+		pattern="${1-}"
+		[[ -n $pattern ]] || die "--pattern requires a value"
+		;;
+	-c | --checksums)
+		shift
+		checksums_file="${1-}"
+		[[ -n $checksums_file ]] || die "--checksums requires a value"
+		;;
+	-o | --output-prefix)
+		shift
+		output_prefix="${1-}"
+		[[ -n $output_prefix ]] || die "--output-prefix requires a value"
+		[[ $output_prefix =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+			die "--output-prefix must match ^[A-Za-z_][A-Za-z0-9_]*$"
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*) die "Unknown argument: $1" ;;
+	esac
+	shift
+
+done
+
+[[ -n $pattern ]] || {
+	usage
+	die "--pattern is required"
+}
+
+[[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
+
+pushd "$dist_dir" >/dev/null
+trap 'popd >/dev/null || true' EXIT
+
+shopt -s nullglob
+# shellcheck disable=SC2206 # Intentional: allow glob expansion from --pattern.
+files=($pattern)
+shopt -u nullglob
+
+if ((${#files[@]} == 0)); then
+	die "No files matched pattern: $pattern"
+fi
+
+if ((${#files[@]} != 1)); then
+	printf "ERROR: Expected exactly 1 file for pattern %s, found %s.\n" "$pattern" "${#files[@]}" >&2
+	printf '%s\n' "${files[@]}" >&2
+	exit 1
+fi
+
+asset_name="${files[0]}"
+
+[[ -f $checksums_file ]] || die "$checksums_file not found in $dist_dir"
+
+mapfile -t matches < <(grep -F -- "  $asset_name" "$checksums_file" || true)
+
+if ((${#matches[@]} == 0)); then
+	die "No checksum entry found for $asset_name in $checksums_file"
+fi
+
+if ((${#matches[@]} != 1)); then
+	printf "ERROR: Multiple checksum entries found for %s in %s.\n" "$asset_name" "$checksums_file" >&2
+	printf '%s\n' "${matches[@]}" >&2
+	exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+	printf '%s\n' "${matches[0]}" | sha256sum -c -
+elif command -v shasum >/dev/null 2>&1; then
+	printf '%s\n' "${matches[0]}" | shasum -a 256 -c -
+else
+	die "Need sha256sum or shasum to verify SHA-256 checksums."
+fi
+
+if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+	emit_output "${output_prefix}_name" "$asset_name"
+	emit_output "${output_prefix}_path" "$dist_dir/$asset_name"
+fi
