@@ -102,6 +102,8 @@ else
 fi
 
 emit_output "asc_keys_dir" "$keys_dir"
+emit_output "asc_keys_filename" "$key_filename"
+emit_output "asc_keys_path" "$key_path"
 
 # Stdout must only contain the key path for caller chaining.
 printf '%s\n' "$key_path"
