@@ -13,12 +13,18 @@ Required environment variables:
  ASC_KEY_ID         Key ID used in filename AuthKey_<ID>.p8
 
 Optional:
- ASC_KEYS_DIR                  Directory to place the key (default: temp dir)
+ ASC_KEY_DIR                   Directory to place the key (default: temp dir)
  ASC_AUTH_KEY_FORCE_DECODE=1   Decode even if key file already exists
  ASC_USE_STANDARD_DIR=1        Use ~/.appstoreconnect/private_keys
 
 Output:
  Prints the full key path to stdout. All logs go to stderr.
+
+Notes:
+ In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
+   - asc_key_dir
+   - asc_key_filename
+   - asc_key_path
 EOF
 }
 
@@ -101,9 +107,9 @@ else
 	chmod 600 "$key_path"
 fi
 
-emit_output "asc_keys_dir" "$keys_dir"
-emit_output "asc_keys_filename" "$key_filename"
-emit_output "asc_keys_path" "$key_path"
+emit_output "asc_key_dir" "$keys_dir"
+emit_output "asc_key_filename" "$key_filename"
+emit_output "asc_key_path" "$key_path"
 
 # Stdout must only contain the key path for caller chaining.
 printf '%s\n' "$key_path"

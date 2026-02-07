@@ -16,7 +16,9 @@ Options:
   -h, --help            Show this help message.
 
 Notes:
-  - In CI (when GITHUB_OUTPUT is set), emits <prefix>_name and <prefix>_path.
+ In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
+   - <prefix>_filename
+   - <prefix>_path
 USAGE
 }
 
@@ -99,18 +101,18 @@ if ((${#files[@]} != 1)); then
 	exit 1
 fi
 
-asset_name="${files[0]}"
+asset_filename="${files[0]}"
 
 [[ -f $checksums_file ]] || die "$checksums_file not found in $dist_dir"
 
-mapfile -t matches < <(grep -F -- "  $asset_name" "$checksums_file" || true)
+mapfile -t matches < <(grep -F -- "  $asset_filename" "$checksums_file" || true)
 
 if ((${#matches[@]} == 0)); then
-	die "No checksum entry found for $asset_name in $checksums_file"
+	die "No checksum entry found for $asset_filename in $checksums_file"
 fi
 
 if ((${#matches[@]} != 1)); then
-	printf "ERROR: Multiple checksum entries found for %s in %s.\n" "$asset_name" "$checksums_file" >&2
+	printf "ERROR: Multiple checksum entries found for %s in %s.\n" "$asset_filename" "$checksums_file" >&2
 	printf '%s\n' "${matches[@]}" >&2
 	exit 1
 fi
@@ -124,6 +126,6 @@ else
 fi
 
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-	emit_output "${output_prefix}_name" "$asset_name"
-	emit_output "${output_prefix}_path" "$dist_dir/$asset_name"
+	emit_output "${output_prefix}_filename" "$asset_filename"
+	emit_output "${output_prefix}_path" "$dist_dir/$asset_filename"
 fi
