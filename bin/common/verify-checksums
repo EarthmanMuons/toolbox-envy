@@ -27,7 +27,7 @@ die() {
 	exit 1
 }
 
-emit_output() {
+emit_github_output() {
 	local key="$1"
 	local value="$2"
 
@@ -126,6 +126,6 @@ else
 fi
 
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-	emit_output "${output_prefix}_filename" "$asset_filename"
-	emit_output "${output_prefix}_path" "$dist_dir/$asset_filename"
+	emit_github_output "${output_prefix}_filename" "$asset_filename"
+	emit_github_output "${output_prefix}_path" "$dist_dir/$asset_filename"
 fi

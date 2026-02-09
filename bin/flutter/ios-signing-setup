@@ -49,7 +49,7 @@ require_env() {
 	[[ -n ${!name:-} ]] || die "missing required env var: $name"
 }
 
-emit_output() {
+emit_github_output() {
 	local key="$1"
 	local value="$2"
 
@@ -136,7 +136,7 @@ printf '%s setting keychain as default for this job\n' "$log_prefix"
 security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
 security default-keychain -s "$IOS_KEYCHAIN_PATH"
 
-emit_output "keychain_path" "$IOS_KEYCHAIN_PATH"
+emit_github_output "keychain_path" "$IOS_KEYCHAIN_PATH"
 
 wwdr_cer="$tmp_dir/$wwdr_cer_filename"
 
@@ -192,8 +192,8 @@ if [[ -n $profile_path ]]; then
 	chmod 600 "$install_path"
 
 	if [[ -n $profile_uuid ]]; then
-		emit_output "provisioning_profile_uuid" "$profile_uuid"
-		emit_output "provisioning_profile_path" "$install_path"
+		emit_github_output "provisioning_profile_uuid" "$profile_uuid"
+		emit_github_output "provisioning_profile_path" "$install_path"
 	fi
 fi
 
