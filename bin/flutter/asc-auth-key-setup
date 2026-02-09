@@ -50,7 +50,7 @@ require_env() {
 	[[ -n ${!name:-} ]] || die "missing required env var: $name"
 }
 
-emit_output() {
+emit_github_output() {
 	local key="$1"
 	local value="$2"
 
@@ -107,9 +107,9 @@ else
 	chmod 600 "$key_path"
 fi
 
-emit_output "asc_key_dir" "$keys_dir"
-emit_output "asc_key_filename" "$key_filename"
-emit_output "asc_key_path" "$key_path"
+emit_github_output "asc_key_dir" "$keys_dir"
+emit_github_output "asc_key_filename" "$key_filename"
+emit_github_output "asc_key_path" "$key_path"
 
 # Stdout must only contain the key path for caller chaining.
 printf '%s\n' "$key_path"
