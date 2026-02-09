@@ -2,17 +2,12 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   get-project-version [<package-name>]
 
-Reads the version for a Rust package in the current repository using `cargo metadata`.
-
-Examples:
-  get-project-version my-crate
-  get-project-version
-  echo my-crate | get-project-version
-EOF
+Read the Rust package version via cargo metadata.
+USAGE
 }
 
 die() {
@@ -20,47 +15,35 @@ die() {
 	exit 1
 }
 
-main() {
-	if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
-		usage
-		exit 0
-	fi
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
+}
 
-	[[ $# -le 1 ]] || {
-		usage
-		die "expected at most one argument: <package-name>"
-	}
-
-	local pkg="${1:-}"
-	if [[ -z $pkg && ! -t 0 ]]; then
-		IFS= read -r pkg || true
-		pkg="${pkg//$'\r'/}"
-		pkg="$(printf '%s' "$pkg" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-	fi
-
-	command -v cargo >/dev/null 2>&1 || die "cargo is required"
-	command -v jq >/dev/null 2>&1 || die "jq is required"
-
-	local repo_root=""
+resolve_repo_root() {
+	local root=""
 	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-		repo_root=$GITHUB_WORKSPACE
+		root=$GITHUB_WORKSPACE
 	else
 		if command -v git >/dev/null 2>&1; then
-			repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 		fi
 	fi
-	if [[ -n $repo_root ]]; then
-		repo_root="$(cd "$repo_root" && pwd -P)"
+	if [[ -n $root ]]; then
+		root="$(cd "$root" && pwd -P)"
 	fi
+	printf '%s' "$root"
+}
 
-	local manifest=""
+find_manifest() {
+	local repo_root="$1"
 	local current_dir=""
 	current_dir="$(pwd -P)"
 	local dir="$current_dir"
+
 	while :; do
 		if [[ -f "$dir/Cargo.toml" ]]; then
-			manifest="$dir/Cargo.toml"
-			break
+			printf '%s' "$dir/Cargo.toml"
+			return 0
 		fi
 		if [[ -n $repo_root && $dir == "$repo_root" ]]; then
 			break
@@ -73,16 +56,55 @@ main() {
 		dir="$parent"
 	done
 
-	[[ -n $manifest ]] || die "Cargo.toml not found between $current_dir and ${repo_root:-filesystem root}."
+	printf ''
+}
+
+# Defaults (populated/overridden by parse_args)
+package_name=""
+
+parse_args() {
+	case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	esac
+
+	[[ $# -le 1 ]] || {
+		usage
+		die "expected at most one argument: <package-name>"
+	}
+
+	package_name="${1:-}"
+
+	if [[ -z $package_name && ! -t 0 ]]; then
+		IFS= read -r package_name || true
+		package_name="${package_name//$'\r'/}"
+		package_name="$(printf '%s' "$package_name" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+	fi
+}
+
+main() {
+	parse_args "$@"
+
+	need_cmd cargo
+	need_cmd jq
+
+	local repo_root=""
+	repo_root="$(resolve_repo_root)"
+
+	local manifest=""
+	manifest="$(find_manifest "$repo_root")"
+	[[ -n $manifest ]] || die "Cargo.toml not found between $(pwd -P) and ${repo_root:-filesystem root}."
 
 	local metadata=""
 	metadata="$(cargo metadata --no-deps --format-version=1 --manifest-path "$manifest")"
 
-	if [[ -z $pkg ]]; then
+	if [[ -z $package_name ]]; then
 		local pkg_count=""
 		pkg_count="$(jq -r '.packages | length' <<<"$metadata")"
 		if [[ $pkg_count == "1" ]]; then
-			pkg="$(jq -r '.packages[0].name' <<<"$metadata")"
+			package_name="$(jq -r '.packages[0].name' <<<"$metadata")"
 		else
 			local pkg_list=""
 			pkg_list="$(jq -r '.packages[].name' <<<"$metadata" | sort)"
@@ -92,14 +114,14 @@ main() {
 
 	local version=""
 	version="$(
-		jq -r --arg pkg "$pkg" '
+		jq -r --arg pkg "$package_name" '
         .packages[]
         | select(.name == $pkg)
         | .version
       ' <<<"$metadata" | head -n 1
 	)"
 
-	[[ -n $version ]] || die "Package '$pkg' not found in cargo metadata"
+	[[ -n $version ]] || die "Package '$package_name' not found in cargo metadata"
 
 	printf '%s\n' "$version"
 }

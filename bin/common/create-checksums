@@ -6,7 +6,7 @@ usage() {
 Usage:
   create-checksums [--dir <dir>]
 
-Create sha256sums.txt for all regular files in the assets directory.
+Create sha256sums.txt for all regular files in a directory.
 
 Options:
   -d, --dir   Directory containing the assets (default: dist)
@@ -19,49 +19,77 @@ die() {
 	exit 1
 }
 
+# Defaults (populated/overridden by parse_args)
 dist_dir="dist"
 
-while (($#)); do
-	case "$1" in
-	-d | --dir)
+parse_args() {
+	while (($#)); do
+		case "$1" in
+		-d | --dir)
+			shift
+			dist_dir="${1-}"
+			[[ -n $dist_dir ]] || die "--dir requires a value"
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) die "Unknown argument: $1" ;;
+		esac
 		shift
-		dist_dir="${1-}"
-		[[ -n $dist_dir ]] || die "--dir requires a value"
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	*) die "Unknown argument: $1" ;;
-	esac
-	shift
-done
+	done
+}
 
-[[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
+validate_inputs() {
+	[[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
+}
 
-pushd "$dist_dir" >/dev/null
-trap 'popd >/dev/null || true' EXIT
+# Outputs:
+#   sets global FILES (filenames only)
+collect_files() {
+	FILES=()
 
-files=()
-for f in *; do
-	[[ -f $f ]] || continue
-	[[ $f == "sha256sums.txt" ]] && continue
-	files+=("$f")
-done
+	local f base
+	shopt -s nullglob
+	for f in "$dist_dir"/*; do
+		[[ -f $f ]] || continue
+		base="${f##*/}"
+		[[ $base == "sha256sums.txt" ]] && continue
+		FILES+=("$base")
+	done
+	shopt -u nullglob
 
-((${#files[@]} > 0)) || die "No files found in: $dist_dir"
+	((${#FILES[@]} > 0)) || die "No files found in: $dist_dir"
+}
 
-# Output format must remain: "<hash><two spaces><filename>" (GNU sha256sum compatible)
-if command -v sha256sum >/dev/null 2>&1; then
-	LC_ALL=C printf '%s\n' "${files[@]}" | sort | while IFS= read -r f; do
-		sha256sum -- "$f"
-	done >sha256sums.txt
-elif command -v shasum >/dev/null 2>&1; then
-	LC_ALL=C printf '%s\n' "${files[@]}" | sort | while IFS= read -r f; do
-		shasum -a 256 -- "$f"
-	done >sha256sums.txt
-else
-	die "Need sha256sum or shasum to generate SHA-256 checksums."
-fi
+write_checksums() {
+	# Output format must remain: "<hash><two spaces><filename>" (GNU sha256sum compatible)
+	if command -v sha256sum >/dev/null 2>&1; then
+		(
+			cd "$dist_dir"
+			LC_ALL=C printf '%s\n' "${FILES[@]}" | sort | while IFS= read -r f; do
+				sha256sum -- "$f"
+			done >sha256sums.txt
+		)
+	elif command -v shasum >/dev/null 2>&1; then
+		(
+			cd "$dist_dir"
+			LC_ALL=C printf '%s\n' "${FILES[@]}" | sort | while IFS= read -r f; do
+				shasum -a 256 -- "$f"
+			done >sha256sums.txt
+		)
+	else
+		die "Need sha256sum or shasum to generate SHA-256 checksums."
+	fi
+}
 
-printf "wrote %s/sha256sums.txt for %s file(s)\n" "$dist_dir" "${#files[@]}" >&2
+main() {
+	parse_args "$@"
+	validate_inputs
+	collect_files
+	write_checksums
+
+	printf "wrote %s/sha256sums.txt for %s file(s)\n" "$dist_dir" "${#FILES[@]}" >&2
+}
+
+main "$@"

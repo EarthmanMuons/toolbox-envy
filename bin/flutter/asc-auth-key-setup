@@ -2,43 +2,31 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   asc-auth-key-setup
 
-Sets up an App Store Connect API auth key from environment variables.
+Set up an App Store Connect API auth key from env vars.
 
-Required environment variables:
- ASC_AUTH_KEY_B64   Base64-encoded AuthKey .p8 contents
- ASC_KEY_ID         Key ID used in filename AuthKey_<ID>.p8
+Required:
+  ASC_AUTH_KEY_B64   Base64-encoded AuthKey .p8 contents
+  ASC_KEY_ID         Key ID used in filename AuthKey_<ID>.p8
 
 Optional:
- ASC_KEY_DIR                   Directory to place the key (default: temp dir)
- ASC_AUTH_KEY_FORCE_DECODE=1   Decode even if key file already exists
- ASC_USE_STANDARD_DIR=1        Use ~/.appstoreconnect/private_keys
+  ASC_KEY_DIR                  Directory to place the key (default: temp dir)
+  ASC_AUTH_KEY_FORCE_DECODE=1  Decode even if key file already exists
+  ASC_USE_STANDARD_DIR=1       Use ~/.appstoreconnect/private_keys
 
-Output:
- Prints the full key path to stdout. All logs go to stderr.
+Outputs:
+  Prints the key path to stdout. Logs go to stderr.
 
 Notes:
- In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
-   - asc_key_dir
-   - asc_key_filename
-   - asc_key_path
-EOF
+  In CI (when GITHUB_OUTPUT is set), emits:
+    - asc_key_dir
+    - asc_key_filename
+    - asc_key_path
+USAGE
 }
-
-case "${1:-}" in
-"") ;;
--h | --help)
-	usage
-	exit 0
-	;;
-*)
-	usage
-	exit 1
-	;;
-esac
 
 die() {
 	printf "ERROR: %s\n" "$*" >&2
@@ -54,15 +42,12 @@ emit_github_output() {
 	local key="$1"
 	local value="$2"
 
-	# GitHub Actions: write step outputs if requested.
 	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
 		printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
 	fi
 }
 
-# Reads base64 from stdin, writes decoded bytes to stdout.
 decode_base64() {
-	# macOS/BSD uses -D; GNU coreutils uses --decode.
 	if base64 -D </dev/null >/dev/null 2>&1; then
 		base64 -D
 	else
@@ -70,46 +55,62 @@ decode_base64() {
 	fi
 }
 
-##### MAIN
+parse_args() {
+	case "${1:-}" in
+	"") ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+}
 
-# Enable xtrace for general debugging; disable around secret handling.
-set -x
+main() {
+	parse_args "$@"
 
-require_env ASC_AUTH_KEY_B64
-require_env ASC_KEY_ID
-
-log_prefix="[asc-auth-key]"
-
-keys_dir="${ASC_KEYS_DIR:-}"
-if [[ -z $keys_dir ]]; then
-	if [[ ${ASC_USE_STANDARD_DIR:-0} == 1 ]]; then
-		keys_dir="$HOME/.appstoreconnect/private_keys"
-	else
-		keys_dir="$(mktemp -d)"
-	fi
-fi
-
-key_filename="AuthKey_${ASC_KEY_ID}.p8"
-key_path="$keys_dir/$key_filename"
-force_decode="${ASC_AUTH_KEY_FORCE_DECODE:-}"
-
-printf '%s using key directory: %s\n' "$log_prefix" "$keys_dir" >&2
-mkdir -p "$keys_dir"
-
-if [[ -f $key_path && -z $force_decode ]]; then
-	printf '%s key already exists at %s; skipping decode\n' "$log_prefix" "$key_path" >&2
-else
-	printf '%s decoding key to %s\n' "$log_prefix" "$key_path" >&2
-	umask 077
-	set +x
-	printf '%s' "$ASC_AUTH_KEY_B64" | decode_base64 >"$key_path"
 	set -x
-	chmod 600 "$key_path"
-fi
 
-emit_github_output "asc_key_dir" "$keys_dir"
-emit_github_output "asc_key_filename" "$key_filename"
-emit_github_output "asc_key_path" "$key_path"
+	require_env ASC_AUTH_KEY_B64
+	require_env ASC_KEY_ID
 
-# Stdout must only contain the key path for caller chaining.
-printf '%s\n' "$key_path"
+	local log_prefix="[asc-auth-key]"
+
+	local keys_dir="${ASC_KEY_DIR:-}"
+	if [[ -z $keys_dir ]]; then
+		if [[ ${ASC_USE_STANDARD_DIR:-0} == 1 ]]; then
+			keys_dir="$HOME/.appstoreconnect/private_keys"
+		else
+			keys_dir="$(mktemp -d)"
+		fi
+	fi
+
+	local key_filename="AuthKey_${ASC_KEY_ID}.p8"
+	local key_path="$keys_dir/$key_filename"
+	local force_decode="${ASC_AUTH_KEY_FORCE_DECODE:-}"
+
+	printf '%s using key directory: %s\n' "$log_prefix" "$keys_dir" >&2
+	mkdir -p "$keys_dir"
+
+	if [[ -f $key_path && -z $force_decode ]]; then
+		printf '%s key already exists at %s; skipping decode\n' "$log_prefix" "$key_path" >&2
+	else
+		printf '%s decoding key to %s\n' "$log_prefix" "$key_path" >&2
+		umask 077
+		set +x
+		printf '%s' "$ASC_AUTH_KEY_B64" | decode_base64 >"$key_path"
+		set -x
+		chmod 600 "$key_path"
+	fi
+
+	emit_github_output "asc_key_dir" "$keys_dir"
+	emit_github_output "asc_key_filename" "$key_filename"
+	emit_github_output "asc_key_path" "$key_path"
+
+	printf '%s\n' "$key_path"
+}
+
+main "$@"

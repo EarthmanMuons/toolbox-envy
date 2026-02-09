@@ -2,12 +2,18 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   stage-release-assets --slug <slug> [--tag <tag>] [--dist <dir>]
 
 Stage Flutter release assets into dist/ with deterministic names.
-EOF
+
+Options:
+  --slug <slug>  Slug for output filenames (required; lowercase alnum)
+  --tag <tag>    Tag to use locally (required outside CI)
+  --dist <dir>   Output directory (default: dist)
+  -h, --help     Show this help message
+USAGE
 }
 
 die() {
@@ -15,111 +21,130 @@ die() {
 	exit 1
 }
 
-repo_root=""
-if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-	repo_root=$GITHUB_WORKSPACE
-else
-	if command -v git >/dev/null 2>&1; then
-		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+resolve_repo_root() {
+	local root=""
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root=$GITHUB_WORKSPACE
+	else
+		if command -v git >/dev/null 2>&1; then
+			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+		fi
 	fi
-fi
-[[ -n $repo_root ]] || die "Could not determine repository's top-level directory."
+	[[ -n $root ]] || die "Could not determine repository's top-level directory."
+	printf '%s' "$root"
+}
 
-##### MAIN
-
+# Defaults (populated/overridden by parse_args)
 slug=""
 tag=""
 dist_dir="dist"
 
-while (($#)); do
-	case "$1" in
-	--slug)
+parse_args() {
+	while (($#)); do
+		case "$1" in
+		--slug)
+			shift
+			slug="${1-}"
+			[[ -n $slug ]] || die "--slug requires a value"
+			;;
+		--tag)
+			shift
+			tag="${1-}"
+			[[ -n $tag ]] || die "--tag requires a value"
+			;;
+		--dist)
+			shift
+			dist_dir="${1-}"
+			[[ -n $dist_dir ]] || die "--dist requires a value"
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) die "Unknown argument: $1" ;;
+		esac
 		shift
-		slug="${1-}"
-		[[ -n $slug ]] || die "--slug requires a value"
-		;;
-	--tag)
-		shift
-		tag="${1-}"
-		[[ -n $tag ]] || die "--tag requires a value"
-		;;
-	--dist)
-		shift
-		dist_dir="${1-}"
-		[[ -n $dist_dir ]] || die "--dist requires a value"
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	*) die "Unknown argument: $1" ;;
-	esac
-	shift
-done
+	done
+}
 
-[[ -n $slug ]] || die "--slug is required."
-[[ $slug =~ ^[a-z0-9]+$ ]] || die "slug must match ^[a-z0-9]+$ (got: '$slug')."
+validate_inputs() {
+	[[ -n $slug ]] || die "--slug is required."
+	[[ $slug =~ ^[a-z0-9]+$ ]] || die "slug must match ^[a-z0-9]+$ (got: '$slug')."
+}
 
-# Resolve tag with integrity rules:
-# - In CI (GitHub Actions): must run on a tag ref; tag is *always* the triggering tag.
-# - Locally: --tag is required.
-if [[ ${GITHUB_ACTIONS-} == "true" ]]; then
-	[[ ${GITHUB_REF_TYPE-} == "tag" ]] ||
-		die "In CI, this script must run on a tag ref (GITHUB_REF_TYPE=tag)."
+resolve_tag() {
+	if [[ ${GITHUB_ACTIONS-} == "true" ]]; then
+		[[ ${GITHUB_REF_TYPE-} == "tag" ]] ||
+			die "In CI, this script must run on a tag ref (GITHUB_REF_TYPE=tag)."
 
-	[[ -z $tag ]] ||
-		die "In CI, do not pass --tag; the workflow tag is used automatically."
+		[[ -z $tag ]] ||
+			die "In CI, do not pass --tag; the workflow tag is used automatically."
 
-	tag="${GITHUB_REF_NAME-}"
-	[[ -n $tag ]] || die "In CI, GITHUB_REF_NAME was empty; expected a tag name."
-else
-	[[ -n $tag ]] || die "Tag not provided. Pass --tag <tag> locally."
-fi
+		tag="${GITHUB_REF_NAME-}"
+		[[ -n $tag ]] || die "In CI, GITHUB_REF_NAME was empty; expected a tag name."
+	else
+		[[ -n $tag ]] || die "Tag not provided. Pass --tag <tag> locally."
+	fi
+}
 
-cd "$repo_root"
+main() {
+	parse_args "$@"
+	validate_inputs
+	resolve_tag
 
-aab_src="build/app/outputs/bundle/release/app-release.aab"
-apk_src="build/app/outputs/flutter-apk/app-release.apk"
-ipa_pattern="build/ios/ipa/*.ipa"
+	local repo_root=""
+	repo_root="$(resolve_repo_root)"
+	cd "$repo_root"
 
-mkdir -p -- "$dist_dir"
+	local aab_src="build/app/outputs/bundle/release/app-release.aab"
+	local apk_src="build/app/outputs/flutter-apk/app-release.apk"
+	local ipa_pattern="build/ios/ipa/*.ipa"
 
-aab_file="${slug}-${tag}.aab"
-apk_file="${slug}-${tag}.apk"
-ipa_file="${slug}-${tag}.ipa"
+	mkdir -p -- "$dist_dir"
 
-if [[ -f $aab_src ]]; then
-	aab_dst="${dist_dir}/${aab_file}"
-else
-	printf "(missing) %s\n" "$aab_src" >&2
-fi
+	local aab_file="${slug}-${tag}.aab"
+	local apk_file="${slug}-${tag}.apk"
+	local ipa_file="${slug}-${tag}.ipa"
 
-if [[ -f $apk_src ]]; then
-	apk_dst="${dist_dir}/${apk_file}"
-else
-	printf "(missing) %s\n" "$apk_src" >&2
-fi
+	local aab_dst=""
+	local apk_dst=""
+	local ipa_dst=""
 
-shopt -s nullglob
-ipa_matches=(build/ios/ipa/*.ipa)
-shopt -u nullglob
+	if [[ -f $aab_src ]]; then
+		aab_dst="${dist_dir}/${aab_file}"
+	else
+		printf "(missing) %s\n" "$aab_src" >&2
+	fi
 
-if ((${#ipa_matches[@]} == 1)); then
-	ipa_dst="${dist_dir}/${ipa_file}"
-elif ((${#ipa_matches[@]} == 0)); then
-	printf "(missing) %s\n" "$ipa_pattern" >&2
-else
-	die "Multiple IPA files found: ${ipa_matches[*]}"
-fi
+	if [[ -f $apk_src ]]; then
+		apk_dst="${dist_dir}/${apk_file}"
+	else
+		printf "(missing) %s\n" "$apk_src" >&2
+	fi
 
-if [[ -f $aab_src ]]; then
-	cp -v -- "$aab_src" "$aab_dst" >&2
-fi
+	shopt -s nullglob
+	ipa_matches=(build/ios/ipa/*.ipa)
+	shopt -u nullglob
 
-if [[ -f $apk_src ]]; then
-	cp -v -- "$apk_src" "$apk_dst" >&2
-fi
+	if ((${#ipa_matches[@]} == 1)); then
+		ipa_dst="${dist_dir}/${ipa_file}"
+	elif ((${#ipa_matches[@]} == 0)); then
+		printf "(missing) %s\n" "$ipa_pattern" >&2
+	else
+		die "Multiple IPA files found: ${ipa_matches[*]}"
+	fi
 
-if ((${#ipa_matches[@]} == 1)); then
-	cp -v -- "${ipa_matches[0]}" "$ipa_dst" >&2
-fi
+	if [[ -f $aab_src ]]; then
+		cp -v -- "$aab_src" "$aab_dst" >&2
+	fi
+
+	if [[ -f $apk_src ]]; then
+		cp -v -- "$apk_src" "$apk_dst" >&2
+	fi
+
+	if ((${#ipa_matches[@]} == 1)); then
+		cp -v -- "${ipa_matches[0]}" "$ipa_dst" >&2
+	fi
+}
+
+main "$@"

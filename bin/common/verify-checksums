@@ -16,9 +16,9 @@ Options:
   -h, --help            Show this help message.
 
 Notes:
- In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
-   - <prefix>_filename
-   - <prefix>_path
+  In CI (when GITHUB_OUTPUT is set), emits:
+    - <prefix>_filename
+    - <prefix>_path
 USAGE
 }
 

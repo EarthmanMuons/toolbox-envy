@@ -1,50 +1,95 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+	cat >&2 <<'USAGE'
+Usage:
+  get-project-version
+
+Print the SemVer core from pubspec.yaml (X.Y.Z).
+USAGE
+}
+
 die() {
 	printf "ERROR: %s\n" "$*" >&2
 	exit 1
 }
 
-repo_root=""
-if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-	repo_root=$GITHUB_WORKSPACE
-else
-	if command -v git >/dev/null 2>&1; then
-		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+resolve_repo_root() {
+	local root=""
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root=$GITHUB_WORKSPACE
+	else
+		if command -v git >/dev/null 2>&1; then
+			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+		fi
 	fi
-fi
-if [[ -n $repo_root ]]; then
-	repo_root="$(cd "$repo_root" && pwd -P)"
-fi
-
-pubspec=""
-current_dir=""
-current_dir="$(pwd -P)"
-dir="$current_dir"
-while :; do
-	if [[ -f "$dir/pubspec.yaml" ]]; then
-		pubspec="$dir/pubspec.yaml"
-		break
+	if [[ -n $root ]]; then
+		root="$(cd "$root" && pwd -P)"
 	fi
-	if [[ -n $repo_root && $dir == "$repo_root" ]]; then
-		break
+	printf '%s' "$root"
+}
+
+find_pubspec() {
+	local repo_root="$1"
+	local current_dir=""
+	current_dir="$(pwd -P)"
+	local dir="$current_dir"
+
+	while :; do
+		if [[ -f "$dir/pubspec.yaml" ]]; then
+			printf '%s' "$dir/pubspec.yaml"
+			return 0
+		fi
+		if [[ -n $repo_root && $dir == "$repo_root" ]]; then
+			break
+		fi
+		local parent=""
+		parent="$(cd "$dir/.." && pwd -P)"
+		if [[ $parent == "$dir" ]]; then
+			break
+		fi
+		dir="$parent"
+	done
+
+	printf ''
+}
+
+parse_args() {
+	case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	"") ;;
+	*)
+		usage
+		die "no arguments expected"
+		;;
+	esac
+}
+
+main() {
+	parse_args "$@"
+
+	local repo_root=""
+	repo_root="$(resolve_repo_root)"
+
+	local pubspec=""
+	pubspec="$(find_pubspec "$repo_root")"
+	[[ -n $pubspec ]] || die "pubspec.yaml not found between $(pwd -P) and ${repo_root:-filesystem root}."
+
+	local version_line=""
+	version_line="$(grep -E '^[[:space:]]*version[[:space:]]*:' "$pubspec" | head -n 1 || true)"
+	[[ -n $version_line ]] || die "Could not find a 'version:' line in pubspec.yaml"
+
+	local current_version=""
+	current_version="$(sed -E 's/^[[:space:]]*version[[:space:]]*:[[:space:]]*([^[:space:]#]+).*/\1/' <<<"$version_line")"
+	if [[ ! $current_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\+([0-9]+)$ ]]; then
+		die "Current pubspec version must match X.Y.Z+N (got: '$current_version')"
 	fi
-	parent="$(cd "$dir/.." && pwd -P)"
-	if [[ $parent == "$dir" ]]; then
-		break
-	fi
-	dir="$parent"
-done
 
-[[ -n $pubspec ]] || die "pubspec.yaml not found between $current_dir and ${repo_root:-filesystem root}."
+	printf '%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
 
-version_line="$(grep -E '^[[:space:]]*version[[:space:]]*:' "$pubspec" | head -n 1 || true)"
-[[ -n $version_line ]] || die "Could not find a 'version:' line in pubspec.yaml"
-
-current_version="$(sed -E 's/^[[:space:]]*version[[:space:]]*:[[:space:]]*([^[:space:]#]+).*/\1/' <<<"$version_line")"
-if [[ ! $current_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\+([0-9]+)$ ]]; then
-	die "Current pubspec version must match X.Y.Z+N (got: '$current_version')"
-fi
-
-printf '%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+main "$@"
