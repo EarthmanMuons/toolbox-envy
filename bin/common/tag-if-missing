@@ -25,6 +25,26 @@ need_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
 }
 
+resolve_repo_root() {
+	local root=""
+
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root="$GITHUB_WORKSPACE"
+	elif command -v git >/dev/null 2>&1; then
+		root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+	fi
+
+	if [[ -n $root ]]; then
+		root="$(cd "$root" && pwd -P)"
+	fi
+
+	if [[ -z $root ]]; then
+		die "Could not determine repository's top-level directory."
+	fi
+
+	printf '%s' "$root"
+}
+
 is_semver() {
 	local s="$1"
 	local num_id='(0|[1-9][0-9]*)'
@@ -113,7 +133,7 @@ main() {
 	need_cmd git
 
 	local repo_root
-	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+	repo_root="$(resolve_repo_root)"
 	cd "$repo_root"
 
 	git remote get-url "$remote" >/dev/null 2>&1 || die "remote '$remote' does not exist"

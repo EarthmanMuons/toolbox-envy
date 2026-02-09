@@ -17,16 +17,21 @@ die() {
 
 resolve_repo_root() {
 	local root=""
+
 	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-		root=$GITHUB_WORKSPACE
-	else
-		if command -v git >/dev/null 2>&1; then
-			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-		fi
+		root="$GITHUB_WORKSPACE"
+	elif command -v git >/dev/null 2>&1; then
+		root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 	fi
+
 	if [[ -n $root ]]; then
 		root="$(cd "$root" && pwd -P)"
 	fi
+
+	if [[ -z $root ]]; then
+		die "Could not determine repository's top-level directory."
+	fi
+
 	printf '%s' "$root"
 }
 
@@ -77,7 +82,7 @@ main() {
 
 	local pubspec=""
 	pubspec="$(find_pubspec "$repo_root")"
-	[[ -n $pubspec ]] || die "pubspec.yaml not found between $(pwd -P) and ${repo_root:-filesystem root}."
+	[[ -n $pubspec ]] || die "pubspec.yaml not found between $(pwd -P) and $repo_root."
 
 	local version_line=""
 	version_line="$(grep -E '^[[:space:]]*version[[:space:]]*:' "$pubspec" | head -n 1 || true)"

@@ -21,16 +21,21 @@ need_cmd() {
 
 resolve_repo_root() {
 	local root=""
+
 	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-		root=$GITHUB_WORKSPACE
-	else
-		if command -v git >/dev/null 2>&1; then
-			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-		fi
+		root="$GITHUB_WORKSPACE"
+	elif command -v git >/dev/null 2>&1; then
+		root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 	fi
+
 	if [[ -n $root ]]; then
 		root="$(cd "$root" && pwd -P)"
 	fi
+
+	if [[ -z $root ]]; then
+		die "Could not determine repository's top-level directory."
+	fi
+
 	printf '%s' "$root"
 }
 
@@ -95,7 +100,7 @@ main() {
 
 	local manifest=""
 	manifest="$(find_manifest "$repo_root")"
-	[[ -n $manifest ]] || die "Cargo.toml not found between $(pwd -P) and ${repo_root:-filesystem root}."
+	[[ -n $manifest ]] || die "Cargo.toml not found between $(pwd -P) and $repo_root."
 
 	local metadata=""
 	metadata="$(cargo metadata --no-deps --format-version=1 --manifest-path "$manifest")"
