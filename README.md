@@ -109,6 +109,46 @@ See [docs/github-action.md][] for full details.
 [docs/github-action.md]:
   https://github.com/EarthmanMuons/toolbox-envy/blob/main/docs/github-action.md
 
+## Script Index
+
+Scripts are defined as executable files under `bin/`.
+
+### Common
+
+General-purpose scripts intended for use by any repository:
+
+- `bump-calver` – Generate and format CalVer dates from input or today (UTC)
+- `bump-changelog-version` – Roll CHANGELOG.md from Unreleased to a new release
+- `bump-semver` – Bump or set a SemVer core, with optional prerelease/build
+- `create-checksums` – Generate `sha256sums.txt` for release assets
+- `screenshot-mode` – Apply or reset canonical iOS/Android screenshot state
+- `tag-if-missing` – Create and push a missing git tag (SemVer aware)
+- `verify-checksums` – Verify an asset checksum and emit CI outputs
+
+### Flutter
+
+Scripts specific to Flutter projects:
+
+- `android-signing-setup` – Prepare Android keystore + `key.properties` from env
+- `asc-auth-key-setup` – Decode App Store Connect API key and emit CI outputs
+- `get-project-version` – Read Flutter `pubspec.yaml` version core
+- `ios-signing-setup` – Configure iOS signing keychain, cert, and profile for CI
+- `set-project-version` – Write Flutter version core and bump build number
+- `stage-release-assets` – Stage Flutter release artifacts into `dist/`
+
+### Media
+
+Image and screenshot utilities:
+
+- `diagmerge` – Diagonally merge two same-size images with optional feathering
+- `shotproc` – Process a screenshot (resize, strip metadata, set quality)
+
+### Rust
+
+Scripts specific to Rust projects:
+
+- `get-project-version` – Read Rust package version via `cargo metadata`
+
 ## Why the Name?
 
 Because every good shop has that one perfectly organized toolbox you wish was
