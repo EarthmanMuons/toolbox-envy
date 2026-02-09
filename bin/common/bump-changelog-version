@@ -56,6 +56,26 @@ read_version_from_stdin() {
 	printf '%s\n' "$lines"
 }
 
+resolve_repo_root() {
+	local root=""
+
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root="$GITHUB_WORKSPACE"
+	elif command -v git >/dev/null 2>&1; then
+		root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+	fi
+
+	if [[ -n $root ]]; then
+		root="$(cd "$root" && pwd -P)"
+	fi
+
+	if [[ -z $root ]]; then
+		die "Could not determine repository's top-level directory."
+	fi
+
+	printf '%s' "$root"
+}
+
 # Defaults (populated/overridden by parse_args)
 new_version=""
 
@@ -81,19 +101,6 @@ parse_args() {
 		usage
 		exit 1
 	fi
-}
-
-resolve_repo_root() {
-	local root=""
-	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-		root=$GITHUB_WORKSPACE
-	else
-		if command -v git >/dev/null 2>&1; then
-			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-		fi
-	fi
-	[[ -n $root ]] || die "Could not determine repository's top-level directory."
-	printf '%s' "$root"
 }
 
 find_prev_version() {
