@@ -2,42 +2,26 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   ios-signing-setup
 
-Sets up iOS signing for CI by:
-- Decoding the signing cert (P12) and provisioning profile
-- Creating and configuring an ephemeral keychain
-- Importing the signing cert and granting non-interactive access
-- Installing the provisioning profile
+Set up iOS signing in CI from env vars.
 
 Required environment variables:
- IOS_SIGNING_CERT_B64          Base64-encoded P12 signing certificate
- IOS_SIGNING_CERT_PASSWORD     Password for the P12
- IOS_PROVISIONING_PROFILE_B64  Base64-encoded .mobileprovision
- IOS_KEYCHAIN_PASSWORD         Password for the ephemeral keychain
+  IOS_SIGNING_CERT_B64          Base64-encoded P12 signing certificate
+  IOS_SIGNING_CERT_PASSWORD     Password for the P12
+  IOS_PROVISIONING_PROFILE_B64  Base64-encoded .mobileprovision
+  IOS_KEYCHAIN_PASSWORD         Password for the ephemeral keychain
 
 Notes:
- In CI (when GITHUB_OUTPUT is set), emits the following step outputs:
-   - keychain_path
- If a provisioning profile UUID is available, also emits the following step outputs:
-   - provisioning_profile_uuid
-   - provisioning_profile_path
-EOF
+  In CI (when GITHUB_OUTPUT is set), emits:
+    - keychain_path
+  If a provisioning profile UUID is available, also emits:
+    - provisioning_profile_uuid
+    - provisioning_profile_path
+USAGE
 }
-
-case "${1:-}" in
-"") ;;
--h | --help)
-	usage
-	exit 0
-	;;
-*)
-	usage
-	exit 1
-	;;
-esac
 
 die() {
 	printf "ERROR: %s\n" "$*" >&2
@@ -53,54 +37,25 @@ emit_github_output() {
 	local key="$1"
 	local value="$2"
 
-	# GitHub Actions: write step outputs if requested.
 	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
 		printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
 	fi
 }
 
-repo_root=""
-if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-	repo_root=$GITHUB_WORKSPACE
-else
-	if command -v git >/dev/null 2>&1; then
-		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+resolve_repo_root() {
+	local root=""
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root=$GITHUB_WORKSPACE
+	else
+		if command -v git >/dev/null 2>&1; then
+			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+		fi
 	fi
-fi
-[[ -n $repo_root ]] || die "Could not determine repository's top-level directory"
-
-##### MAIN
-
-# Prevent accidental secret echoing if caller enabled xtrace.
-set +x 2>/dev/null || true
-
-log_prefix="[ios-signing]"
-printf '%s configuring iOS signing\n' "$log_prefix"
-
-wwdr_url="https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
-wwdr_cer_filename="AppleWWDRCAG3.cer"
-
-cd "$repo_root"
-
-require_env IOS_SIGNING_CERT_B64
-require_env IOS_SIGNING_CERT_PASSWORD
-require_env IOS_PROVISIONING_PROFILE_B64
-require_env IOS_KEYCHAIN_PASSWORD
-
-IOS_KEYCHAIN_PATH="${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db"
-IOS_KEYCHAIN_TIMEOUT="21600"
-
-# Temp dir only stages decoded cert/profile and derived plist. Xcode reads from
-# the keychain and installed profile, so temp files can be deleted on exit.
-tmp_dir="$(mktemp -d)"
-cleanup() {
-	rm -rf "$tmp_dir"
+	[[ -n $root ]] || die "Could not determine repository's top-level directory"
+	printf '%s' "$root"
 }
-trap cleanup EXIT
 
-# Reads base64 from stdin, writes decoded bytes to stdout.
 decode_base64() {
-	# macOS/BSD uses -D; GNU coreutils uses --decode.
 	if base64 -D </dev/null >/dev/null 2>&1; then
 		base64 -D
 	else
@@ -108,108 +63,157 @@ decode_base64() {
 	fi
 }
 
-cert_path="$tmp_dir/signing.p12"
-printf '%s decoding signing cert\n' "$log_prefix"
-umask 077
-printf '%s' "$IOS_SIGNING_CERT_B64" | decode_base64 >"$cert_path"
-chmod 600 "$cert_path"
+parse_args() {
+	case "${1:-}" in
+	"") ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+}
 
-profile_path="$tmp_dir/profile.mobileprovision"
-printf '%s decoding provisioning profile\n' "$log_prefix"
-printf '%s' "$IOS_PROVISIONING_PROFILE_B64" | decode_base64 >"$profile_path"
-chmod 600 "$profile_path"
+main() {
+	parse_args "$@"
 
-if security show-keychain-info "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1; then
-	printf '%s deleting existing keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
-	security delete-keychain "$IOS_KEYCHAIN_PATH" || true
-fi
-if [[ -f $IOS_KEYCHAIN_PATH ]]; then
-	rm -f "$IOS_KEYCHAIN_PATH"
-fi
+	set +x 2>/dev/null || true
 
-printf '%s creating keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
-security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
-security set-keychain-settings -lut "$IOS_KEYCHAIN_TIMEOUT" "$IOS_KEYCHAIN_PATH"
-security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+	local log_prefix="[ios-signing]"
+	printf '%s configuring iOS signing\n' "$log_prefix"
 
-printf '%s setting keychain as default for this job\n' "$log_prefix"
-security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
-security default-keychain -s "$IOS_KEYCHAIN_PATH"
+	local repo_root=""
+	repo_root="$(resolve_repo_root)"
+	cd "$repo_root"
 
-emit_github_output "keychain_path" "$IOS_KEYCHAIN_PATH"
+	require_env IOS_SIGNING_CERT_B64
+	require_env IOS_SIGNING_CERT_PASSWORD
+	require_env IOS_PROVISIONING_PROFILE_B64
+	require_env IOS_KEYCHAIN_PASSWORD
 
-wwdr_cer="$tmp_dir/$wwdr_cer_filename"
+	local wwdr_url="https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+	local wwdr_cer_filename="AppleWWDRCAG3.cer"
 
-printf '%s fetching WWDR intermediate (G3)\n' "$log_prefix"
-curl -fsSL -o "$wwdr_cer" "$wwdr_url"
+	local IOS_KEYCHAIN_PATH="${RUNNER_TEMP:-/tmp}/ios-signing.keychain-db"
+	local IOS_KEYCHAIN_TIMEOUT="21600"
 
-printf '%s importing WWDR intermediate into keychain\n' "$log_prefix"
-security import "$wwdr_cer" \
-	-k "$IOS_KEYCHAIN_PATH" \
-	-T /usr/bin/codesign \
-	-T /usr/bin/security \
-	-T /usr/bin/xcodebuild
+	local tmp_dir=""
+	tmp_dir="$(mktemp -d)"
+	cleanup() {
+		rm -rf "$tmp_dir"
+	}
+	trap cleanup EXIT
 
-printf '%s importing signing cert into keychain\n' "$log_prefix"
-security import "$cert_path" \
-	-k "$IOS_KEYCHAIN_PATH" \
-	-P "$IOS_SIGNING_CERT_PASSWORD" \
-	-T /usr/bin/codesign \
-	-T /usr/bin/security \
-	-T /usr/bin/xcodebuild
+	local cert_path="$tmp_dir/signing.p12"
+	printf '%s decoding signing cert\n' "$log_prefix"
+	umask 077
+	printf '%s' "$IOS_SIGNING_CERT_B64" | decode_base64 >"$cert_path"
+	chmod 600 "$cert_path"
 
-printf '%s granting key access to Apple tools\n' "$log_prefix"
-security set-key-partition-list -S apple-tool:,apple: -s \
-	-k "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+	local profile_path="$tmp_dir/profile.mobileprovision"
+	printf '%s decoding provisioning profile\n' "$log_prefix"
+	printf '%s' "$IOS_PROVISIONING_PROFILE_B64" | decode_base64 >"$profile_path"
+	chmod 600 "$profile_path"
 
-printf '%s keychain search list:\n' "$log_prefix"
-security list-keychains -d user
-printf '%s default keychain:\n' "$log_prefix"
-security default-keychain
+	if security show-keychain-info "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1; then
+		printf '%s deleting existing keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
+		security delete-keychain "$IOS_KEYCHAIN_PATH" || true
+	fi
+	if [[ -f $IOS_KEYCHAIN_PATH ]]; then
+		rm -f "$IOS_KEYCHAIN_PATH"
+	fi
 
-if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
-	printf '%s code signing identities:\n' "$log_prefix"
-	security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
-fi
+	printf '%s creating keychain at %s\n' "$log_prefix" "$IOS_KEYCHAIN_PATH"
+	security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+	security set-keychain-settings -lut "$IOS_KEYCHAIN_TIMEOUT" "$IOS_KEYCHAIN_PATH"
+	security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
 
-if [[ -n $profile_path ]]; then
-	profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
-	mkdir -p "$profiles_dir"
+	printf '%s setting keychain as default for this job\n' "$log_prefix"
+	security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" /Library/Keychains/System.keychain
+	security default-keychain -s "$IOS_KEYCHAIN_PATH"
 
-	profile_plist="$tmp_dir/profile.plist"
-	security cms -D -i "$profile_path" >"$profile_plist"
-	profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist" 2>/dev/null || true)"
+	emit_github_output "keychain_path" "$IOS_KEYCHAIN_PATH"
 
-	if [[ -n $profile_uuid ]]; then
-		install_path="$profiles_dir/$profile_uuid.mobileprovision"
+	local wwdr_cer="$tmp_dir/$wwdr_cer_filename"
+
+	printf '%s fetching WWDR intermediate (G3)\n' "$log_prefix"
+	curl -fsSL -o "$wwdr_cer" "$wwdr_url"
+
+	printf '%s importing WWDR intermediate into keychain\n' "$log_prefix"
+	security import "$wwdr_cer" \
+		-k "$IOS_KEYCHAIN_PATH" \
+		-T /usr/bin/codesign \
+		-T /usr/bin/security \
+		-T /usr/bin/xcodebuild
+
+	printf '%s importing signing cert into keychain\n' "$log_prefix"
+	security import "$cert_path" \
+		-k "$IOS_KEYCHAIN_PATH" \
+		-P "$IOS_SIGNING_CERT_PASSWORD" \
+		-T /usr/bin/codesign \
+		-T /usr/bin/security \
+		-T /usr/bin/xcodebuild
+
+	printf '%s granting key access to Apple tools\n' "$log_prefix"
+	security set-key-partition-list -S apple-tool:,apple: -s \
+		-k "$IOS_KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+
+	printf '%s keychain search list:\n' "$log_prefix"
+	security list-keychains -d user
+	printf '%s default keychain:\n' "$log_prefix"
+	security default-keychain
+
+	if [[ ${IOS_SIGNING_DEBUG:-0} == 1 ]]; then
+		printf '%s code signing identities:\n' "$log_prefix"
+		security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" || true
+	fi
+
+	if [[ -n $profile_path ]]; then
+		local profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+		mkdir -p "$profiles_dir"
+
+		local profile_plist="$tmp_dir/profile.plist"
+		security cms -D -i "$profile_path" >"$profile_plist"
+		local profile_uuid=""
+		profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist" 2>/dev/null || true)"
+
+		local install_path=""
+		if [[ -n $profile_uuid ]]; then
+			install_path="$profiles_dir/$profile_uuid.mobileprovision"
+		else
+			install_path="$profiles_dir/profile.mobileprovision"
+		fi
+
+		printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
+		cp -f "$profile_path" "$install_path"
+		[[ -f $install_path ]] || die "provisioning profile copy failed: $install_path"
+		chmod 600 "$install_path"
+
+		if [[ -n $profile_uuid ]]; then
+			emit_github_output "provisioning_profile_uuid" "$profile_uuid"
+			emit_github_output "provisioning_profile_path" "$install_path"
+		fi
+	fi
+
+	if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
+		printf '%s diagnostics: build settings (filtered)\n' "$log_prefix" >&2
+		if ! (
+			cd ios/
+			xcodebuild -showBuildSettings \
+				-workspace Runner.xcworkspace \
+				-scheme Runner \
+				-configuration Release | grep -E 'CODE_SIGN_STYLE|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM' 1>&2
+		); then
+			printf '%s diagnostics: unable to fetch build settings (non-fatal)\n' "$log_prefix" >&2
+		fi
 	else
-		install_path="$profiles_dir/profile.mobileprovision"
+		printf '%s diagnostics: ios/Runner.xcworkspace not found, skipping\n' "$log_prefix" >&2
 	fi
 
-	printf '%s installing provisioning profile to %s\n' "$log_prefix" "$install_path"
-	cp -f "$profile_path" "$install_path"
-	[[ -f $install_path ]] || die "provisioning profile copy failed: $install_path"
-	chmod 600 "$install_path"
+	printf '%s signing configuration ready\n' "$log_prefix"
+}
 
-	if [[ -n $profile_uuid ]]; then
-		emit_github_output "provisioning_profile_uuid" "$profile_uuid"
-		emit_github_output "provisioning_profile_path" "$install_path"
-	fi
-fi
-
-if [[ -d ios && -f ios/Runner.xcworkspace/contents.xcworkspacedata ]]; then
-	printf '%s diagnostics: build settings (filtered)\n' "$log_prefix" >&2
-	if ! (
-		cd ios/
-		xcodebuild -showBuildSettings \
-			-workspace Runner.xcworkspace \
-			-scheme Runner \
-			-configuration Release | grep -E 'CODE_SIGN_STYLE|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY|DEVELOPMENT_TEAM' 1>&2
-	); then
-		printf '%s diagnostics: unable to fetch build settings (non-fatal)\n' "$log_prefix" >&2
-	fi
-else
-	printf '%s diagnostics: ios/Runner.xcworkspace not found, skipping\n' "$log_prefix" >&2
-fi
-
-printf '%s signing configuration ready\n' "$log_prefix"
+main "$@"

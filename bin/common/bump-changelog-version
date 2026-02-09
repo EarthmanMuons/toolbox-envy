@@ -2,18 +2,16 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   bump-changelog-version <new-semver>
   get-project-version | bump-changelog-version
 
-Updates CHANGELOG.md (Keep a Changelog style):
-- Converts "## [Unreleased]" into "## [<new>] - <today>"
-- Inserts a fresh "## [Unreleased]" heading above it (with a blank line between)
-- Updates reference links:
-  - [Unreleased]: .../compare/v<new>...HEAD
-  - Inserts [<new>]: .../compare/v<prev>...v<new> immediately after it
-EOF
+Update CHANGELOG.md (Keep a Changelog style):
+- Move "## [Unreleased]" to "## [<new>] - <today>"
+- Insert a fresh "## [Unreleased]" above it
+- Update reference links for [Unreleased] and [<new>]
+USAGE
 }
 
 die() {
@@ -21,38 +19,23 @@ die() {
 	exit 1
 }
 
-# SemVer 2.0.0 validator.
 is_semver() {
 	local s="$1"
-
-	# Numeric identifier: 0 or non-zero followed by digits
 	local num_id='(0|[1-9][0-9]*)'
-
-	# Pre-release identifier:
-	#   - numeric identifiers follow num_id (no leading zeros)
-	#   - alphanumeric identifiers must contain at least one letter or hyphen
 	local pre_id="(${num_id}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 	local pre="(-${pre_id}(\\.${pre_id})*)?"
-
-	# Build identifier: one or more [0-9A-Za-z-], dot-separated
 	local build_id='[0-9A-Za-z-]+'
 	local build="(\\+${build_id}(\\.${build_id})*)?"
-
-	# Core: MAJOR.MINOR.PATCH
 	local core="${num_id}\\.${num_id}\\.${num_id}"
-
 	local semver="^${core}${pre}${build}$"
 	[[ $s =~ $semver ]]
 }
 
 read_version_from_stdin() {
-	# Read all of stdin, strip CR, trim whitespace-only lines, take non-empty lines.
-	# Reject if there's more than one non-empty line.
 	local data lines count
 	data="$(cat || true)"
 	data="$(printf '%s' "$data" | tr -d '\r')"
 
-	# Collect non-empty lines (after trimming leading/trailing whitespace).
 	lines="$(
 		printf '%s\n' "$data" |
 			awk '
@@ -73,51 +56,56 @@ read_version_from_stdin() {
 	printf '%s\n' "$lines"
 }
 
-# Accept version either as argv[1] or from stdin.
+# Defaults (populated/overridden by parse_args)
 new_version=""
-if [[ $# -eq 1 ]]; then
-	new_version="$1"
-elif [[ $# -eq 0 ]]; then
-	# If stdin is a TTY, don't block waiting for input.
-	if [[ -t 0 ]]; then
+
+parse_args() {
+	case "${1:-}" in
+	"") ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*) ;;
+	esac
+
+	if [[ $# -eq 1 ]]; then
+		new_version="$1"
+	elif [[ $# -eq 0 ]]; then
+		if [[ -t 0 ]]; then
+			usage
+			exit 1
+		fi
+		new_version="$(read_version_from_stdin)"
+	else
 		usage
 		exit 1
 	fi
-	new_version="$(read_version_from_stdin)"
-else
-	usage
-	exit 1
-fi
+}
 
-repo_root=""
-if [[ -n ${GITHUB_WORKSPACE-} ]]; then
-	repo_root=$GITHUB_WORKSPACE
-else
-	if command -v git >/dev/null 2>&1; then
-		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+resolve_repo_root() {
+	local root=""
+	if [[ -n ${GITHUB_WORKSPACE-} ]]; then
+		root=$GITHUB_WORKSPACE
+	else
+		if command -v git >/dev/null 2>&1; then
+			root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+		fi
 	fi
-fi
-[[ -n $repo_root ]] || die "Could not determine repository's top-level directory."
+	[[ -n $root ]] || die "Could not determine repository's top-level directory."
+	printf '%s' "$root"
+}
 
-##### MAIN
-
-is_semver "$new_version" || die "Invalid semver: '$new_version'"
-
-changelog="$repo_root/CHANGELOG.md"
-[[ -f $changelog ]] || die "Missing file: $changelog"
-
-today="$(date +%F)"
-
-# Find previous version = first ## [X.Y.Z...] heading after ## [Unreleased]
-prev_version="$(
+find_prev_version() {
+	local changelog="$1"
 	awk '
     BEGIN { in_unrel=0; }
     /^##[[:space:]]+\[Unreleased\][[:space:]]*$/ { in_unrel=1; next; }
 
     in_unrel && /^##[[:space:]]+\[/ {
       line=$0
-      sub(/^##[[:space:]]+\[/, "", line)   # remove leading "## ["
-      sub(/\].*$/, "", line)               # keep up to closing bracket
+      sub(/^##[[:space:]]+\[/, "", line)
+      sub(/\].*$/, "", line)
       # Accept semver-like tokens only (allow prerelease/build-ish separators)
       if (line ~ /^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/) {
         print line
@@ -125,31 +113,23 @@ prev_version="$(
       }
     }
   ' "$changelog"
-)"
-[[ -n $prev_version ]] || die "Could not find the next ## [<version>] heading after ## [Unreleased]."
+}
 
-# Refuse if new version already exists as a heading.
-if grep -Eq "^##[[:space:]]+\\[$new_version\\]" "$changelog"; then
-	die "Version '$new_version' already appears as a ## heading in CHANGELOG.md."
-fi
-
-# Detect whether tags are prefixed with "v" by inspecting the existing version repository links.
-tag_prefix="$(
+detect_tag_prefix() {
+	local changelog="$1"
 	awk '
     function inspect_url(url) {
-      # v-prefixed compare
+      # v-prefixed compare/commits
       if (url ~ /\/compare\/v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*\.\.\./) { print "v"; exit 0 }
-      # v-prefixed commits
       if (url ~ /\/commits\/v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/)     { print "v"; exit 0 }
 
-      # Record that we saw unprefixed forms (not used to output anything today, but kept for clarity)
+      # Record that we saw unprefixed forms (not used to output anything today)
       if (url ~ /\/compare\/[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*\.\.\./) { saw_unpref=1 }
       if (url ~ /\/commits\/[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)*$/)      { saw_unpref=1 }
     }
 
     BEGIN { expect_url=0 }
 
-    # Start of a reference-style link definition.
     /^\[[^]]+\]:/ {
       expect_url = 0
 
@@ -164,7 +144,6 @@ tag_prefix="$(
       next
     }
 
-    # Continuation line for a wrapped reference link.
     expect_url {
       if ($0 ~ /^[[:space:]]*$/) next
       url=$0
@@ -174,35 +153,28 @@ tag_prefix="$(
       expect_url = 0
     }
 
-    END {
-      # If we did not find any v-prefixed tags, default to empty.
-      print ""
-    }
+    END { print "" }
   ' "$changelog"
-)"
+}
 
-# Extract [Unreleased]: URL (use split on whitespace)
-unreleased_url="$(
+read_unreleased_url() {
+	local changelog="$1"
 	awk '
-    # Match the definition line. It might be:
-    #   [Unreleased]: https://...
-    # or (Prettier-wrapped):
-    #   [Unreleased]:
-    #     https://...
     /^\[Unreleased\]:/ {
-      # If URL is on the same line, print it.
+      # Match the definition line. It might be:
+      #   [Unreleased]: https://...
+      # or (wrapped):
+      #   [Unreleased]:
+      #     https://...
       if ($0 ~ /^\[Unreleased\]:[[:space:]]+https?:\/\//) {
         print $2
         exit 0
       }
 
       # Otherwise, read forward to find the next non-empty line and treat it as the URL.
-      # (Typically it will be indented.)
       while ((getline nextline) > 0) {
-        # Skip blank/whitespace-only lines.
         if (nextline ~ /^[[:space:]]*$/) continue
 
-        # Strip leading/trailing whitespace.
         gsub(/^[[:space:]]+/, "", nextline)
         gsub(/[[:space:]]+$/, "", nextline)
 
@@ -218,39 +190,34 @@ unreleased_url="$(
       exit 1
     }
   ' "$changelog" || true
-)"
-[[ -n $unreleased_url ]] || die "Could not find a reference link for [Unreleased]"
+}
 
-# Derive repo base URL: https://host/OWNER/REPO
-repo_base="$(printf '%s\n' "$unreleased_url" | sed -E 's#^(https?://[^/]+/[^/]+/[^/]+).*$#\1#')"
-[[ -n $repo_base ]] || die "Could not derive repo base URL from: $unreleased_url"
+rewrite_changelog() {
+	local changelog="$1"
+	local new_version="$2"
+	local today="$3"
+	local new_unrel_link="$4"
+	local new_ver_link="$5"
 
-new_unreleased_link="${repo_base}/compare/${tag_prefix}${new_version}...HEAD"
-new_version_link="${repo_base}/compare/${tag_prefix}${prev_version}...${tag_prefix}${new_version}"
+	local tmp=""
+	tmp="$(mktemp "${TMPDIR:-/tmp}/changelog.XXXXXX")"
+	trap 'rm -f "$tmp"' EXIT
 
-tmp="$(mktemp "${TMPDIR:-/tmp}/changelog.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
-
-# Rewrite file
-awk -v newv="$new_version" \
-	-v today="$today" \
-	-v new_unrel_link="$new_unreleased_link" \
-	-v new_ver_link="$new_version_link" '
+	awk -v newv="$new_version" \
+		-v today="$today" \
+		-v new_unrel_link="$new_unrel_link" \
+		-v new_ver_link="$new_ver_link" '
   BEGIN {
     did_rewrite_headings = 0;
     did_unreleased_link = 0;
     skip_next_unreleased_url = 0;
   }
 
-  # If we replaced a wrapped [Unreleased]: and the next line is the indented URL,
-  # skip it so we do not leave a dangling URL behind.
   skip_next_unreleased_url {
     if ($0 ~ /^[[:space:]]+https?:\/\//) { skip_next_unreleased_url = 0; next }
     skip_next_unreleased_url = 0
-    # fall through and process the line normally
   }
 
-  # Rewrite the existing Unreleased heading:
   /^##[[:space:]]+\[Unreleased\][[:space:]]*$/ && !did_rewrite_headings {
     print "## [Unreleased]";
     print "";
@@ -259,14 +226,11 @@ awk -v newv="$new_version" \
     next;
   }
 
-  # Replace [Unreleased] link (single-line or wrapped) and insert new version link immediately after it.
   /^\[Unreleased\]:/ && !did_unreleased_link {
     print "[Unreleased]: " new_unrel_link;
     print "[" newv "]: " new_ver_link;
     did_unreleased_link = 1;
 
-    # If the original line did NOT contain a URL, it was probably wrapped and
-    # the next line is the URL continuation. Skip it if so.
     if ($0 !~ /^\[Unreleased\]:[[:space:]]+https?:\/\//) {
       skip_next_unreleased_url = 1
     }
@@ -287,7 +251,49 @@ awk -v newv="$new_version" \
   }
 ' "$changelog" >"$tmp"
 
-cp "$tmp" "$changelog"
+	cp "$tmp" "$changelog"
+}
 
-printf "Updated %s: Unreleased -> %s (%s); links: %s -> %s\n" \
-	"$changelog" "$new_version" "$today" "$prev_version" "$new_version"
+main() {
+	parse_args "$@"
+
+	is_semver "$new_version" || die "Invalid semver: '$new_version'"
+
+	local repo_root=""
+	repo_root="$(resolve_repo_root)"
+
+	local changelog="$repo_root/CHANGELOG.md"
+	[[ -f $changelog ]] || die "Missing file: $changelog"
+
+	local today=""
+	today="$(date +%F)"
+
+	local prev_version=""
+	prev_version="$(find_prev_version "$changelog")"
+	[[ -n $prev_version ]] || die "Could not find the next ## [<version>] heading after ## [Unreleased]."
+
+	if grep -Eq "^##[[:space:]]+\[$new_version\]" "$changelog"; then
+		die "Version '$new_version' already appears as a ## heading in CHANGELOG.md."
+	fi
+
+	local tag_prefix=""
+	tag_prefix="$(detect_tag_prefix "$changelog")"
+
+	local unreleased_url=""
+	unreleased_url="$(read_unreleased_url "$changelog")"
+	[[ -n $unreleased_url ]] || die "Could not find a reference link for [Unreleased]"
+
+	local repo_base=""
+	repo_base="$(printf '%s\n' "$unreleased_url" | sed -E 's#^(https?://[^/]+/[^/]+/[^/]+).*$#\1#')"
+	[[ -n $repo_base ]] || die "Could not derive repo base URL from: $unreleased_url"
+
+	local new_unreleased_link="${repo_base}/compare/${tag_prefix}${new_version}...HEAD"
+	local new_version_link="${repo_base}/compare/${tag_prefix}${prev_version}...${tag_prefix}${new_version}"
+
+	rewrite_changelog "$changelog" "$new_version" "$today" "$new_unreleased_link" "$new_version_link"
+
+	printf "Updated %s: Unreleased -> %s (%s); links: %s -> %s\n" \
+		"$changelog" "$new_version" "$today" "$prev_version" "$new_version"
+}
+
+main "$@"

@@ -2,92 +2,99 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
-Process a single screenshot: optional resize-to-width, always strip metadata, set output quality.
-
+	cat >&2 <<'USAGE'
 Usage:
   shotproc [--width N] [--quality Q] <input> [output]
 
-Args:
-  input    Screenshot file to process
-  output   Optional; default: processed.webp
+Process a screenshot: optional resize, strip metadata, set output quality.
 
 Options:
   -w, --width N     Resize to width N (px), keeping aspect ratio
-  -q, --quality Q   Output quality for lossy formats (WebP/JPEG); default 90
-  -h, --help        Show this help
-EOF
+  -q, --quality Q   Output quality for lossy formats (WebP/JPEG) (default: 90)
+  -h, --help        Show this help message
+USAGE
 }
 
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
+}
+
+# Defaults (populated/overridden by parse_args)
 WIDTH=""
 QUALITY="90"
 
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-	-w | --width)
-		[[ $# -ge 2 ]] || {
-			echo "Error: --width requires a value" >&2
+parse_args() {
+	positional=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-w | --width)
+			[[ $# -ge 2 ]] || die "--width requires a value"
+			WIDTH="$2"
+			shift 2
+			;;
+		-q | --quality)
+			[[ $# -ge 2 ]] || die "--quality requires a value"
+			QUALITY="$2"
+			shift 2
+			;;
+		-h | --help)
 			usage
-			exit 1
-		}
-		WIDTH="$2"
-		shift 2
-		;;
-	-q | --quality)
-		[[ $# -ge 2 ]] || {
-			echo "Error: --quality requires a value" >&2
-			usage
-			exit 1
-		}
-		QUALITY="$2"
-		shift 2
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	--)
-		shift
-		break
-		;;
-	-*)
-		echo "Error: unknown option: $1" >&2
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			positional+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	if [[ $# -gt 0 ]]; then
+		positional+=("$@")
+	fi
+}
+
+validate_inputs() {
+	if [[ ${#positional[@]} -lt 1 || ${#positional[@]} -gt 2 ]]; then
 		usage
 		exit 1
-		;;
-	*)
-		break
-		;;
-	esac
-done
-
-if [[ $# -lt 1 || $# -gt 2 ]]; then
-	usage
-	exit 1
-fi
-
-IN="$1"
-OUT="${2:-processed.webp}"
-
-[[ -f $IN ]] || {
-	echo "Error: file not found: $IN" >&2
-	exit 1
+	fi
 }
 
-command -v magick >/dev/null 2>&1 || {
-	echo "Error: ImageMagick 'magick' not found in PATH." >&2
-	exit 1
+main() {
+	parse_args "$@"
+	validate_inputs
+
+	local in_file="${positional[0]}"
+	local out_file="${positional[1]:-processed.webp}"
+
+	[[ -f $in_file ]] || die "file not found: $in_file"
+	need_cmd magick
+
+	declare -a resize_args=()
+	if [[ -n $WIDTH ]]; then
+		resize_args=(-resize "${WIDTH}x")
+	fi
+
+	magick "$in_file" \
+		${resize_args[@]+"${resize_args[@]}"} \
+		-strip \
+		-quality "$QUALITY" \
+		"$out_file"
+
+	echo "Wrote $out_file"
 }
 
-declare -a resize_args=()
-if [[ -n $WIDTH ]]; then
-	resize_args=(-resize "${WIDTH}x")
-fi
-
-magick "$IN" \
-	${resize_args[@]+"${resize_args[@]}"} \
-	-strip \
-	-quality "$QUALITY" \
-	"$OUT"
-
-echo "Wrote $OUT"
+main "$@"

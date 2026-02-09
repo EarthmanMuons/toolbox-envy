@@ -3,38 +3,16 @@ set -euo pipefail
 
 usage() {
 	cat <<'USAGE'
-Create and push a git tag if it does not already exist.
-
-Input:
-  - Provide the desired tag/version as a single argument, OR via stdin.
-  - If the input is a SemVer (2.0.0) string, the script prefixes it with "v".
-  - If the input is already "v<semver>", it is used as-is.
-
-Behavior:
-  - Default: if the tag is missing, create it (annotated) and push it to the remote.
-    If a new tag is pushed, prints the tag name to stdout.
-    If no tag is created/pushed, prints nothing (silent no-op).
-  - --dry-run: do not create or push anything. If the tag is missing, prints a message to stderr.
-
-Examples:
-  tag-if-missing 1.2.3
-  tag-if-missing 1.2.3-rc.1
-  tag-if-missing 1.2.3-rc.1+build.42
-  tag-if-missing v1.2.3+build.42
-  get-project-version | tag-if-missing
-  get-project-version | tag-if-missing --dry-run
-
 Usage:
-  bin/tag-if-missing [options] [<tag-or-version>]
+  tag-if-missing [--remote <name>] [--dry-run] [<tag-or-version>]
+
+Create and push a git tag if it does not already exist.
+Reads the tag/version from stdin or arg. If input is SemVer, prefixes "v".
 
 Options:
-  --remote <name>   Remote to check/push to (default: origin)
-  --dry-run         Do not create or push; only report what would happen (to stderr)
-  -h, --help        Show this help
-
-Exit codes:
-  0  Tag already existed, or was created/pushed successfully, or dry-run completed
-  1  Usage/config error
+  --remote <name>  Remote to check/push to (default: origin)
+  --dry-run        Do not create or push; report to stderr
+  -h, --help       Show this help
 USAGE
 }
 
@@ -43,26 +21,18 @@ die() {
 	exit 1
 }
 
-# SemVer 2.0.0 validator.
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "Required command not found in PATH: $1"
+}
+
 is_semver() {
 	local s="$1"
-
-	# Numeric identifier: 0 or non-zero followed by digits
 	local num_id='(0|[1-9][0-9]*)'
-
-	# Pre-release identifier:
-	#   - numeric identifiers follow num_id (no leading zeros)
-	#   - alphanumeric identifiers must contain at least one letter or hyphen
 	local pre_id="(${num_id}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 	local pre="(-${pre_id}(\\.${pre_id})*)?"
-
-	# Build identifier: one or more [0-9A-Za-z-], dot-separated
 	local build_id='[0-9A-Za-z-]+'
 	local build="(\\+${build_id}(\\.${build_id})*)?"
-
-	# Core: MAJOR.MINOR.PATCH
 	local core="${num_id}\\.${num_id}\\.${num_id}"
-
 	local semver="^${core}${pre}${build}$"
 	[[ $s =~ $semver ]]
 }
@@ -89,7 +59,6 @@ read_input() {
 		local line
 		IFS= read -r line || true
 		line="${line//$'\r'/}"
-		# trim
 		line="${line#"${line%%[![:space:]]*}"}"
 		line="${line%"${line##*[![:space:]]}"}"
 		printf '%s' "$line"
@@ -99,10 +68,11 @@ read_input() {
 	printf ''
 }
 
-main() {
-	local remote="origin"
-	local dry_run="0"
+# Defaults (populated/overridden by parse_args)
+remote="origin"
+dry_run="0"
 
+parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--remote)
@@ -131,7 +101,16 @@ main() {
 		esac
 	done
 
-	command -v git >/dev/null 2>&1 || die "git is required"
+	positional=()
+	if [[ $# -gt 0 ]]; then
+		positional+=("$1")
+	fi
+}
+
+main() {
+	parse_args "$@"
+
+	need_cmd git
 
 	local repo_root
 	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
@@ -140,12 +119,9 @@ main() {
 	git remote get-url "$remote" >/dev/null 2>&1 || die "remote '$remote' does not exist"
 
 	local raw
-	raw="$(read_input "${1:-}")"
+	raw="$(read_input "${positional[0]:-}")"
 	[[ -n $raw ]] || die "no version/tag provided (pass an argument or pipe one via stdin)"
 
-	# Normalize:
-	# - If raw is a SemVer, convert to v<semver>
-	# - If raw is v<semver>, keep as-is
 	local tag=""
 	if is_semver "$raw"; then
 		tag="v$raw"
@@ -155,7 +131,6 @@ main() {
 		die "input must be SemVer (optionally prefixed with 'v'); got: '$raw'"
 	fi
 
-	# Idempotency checks: local first, then remote.
 	if local_tag_exists "$tag"; then
 		exit 0
 	fi
@@ -169,11 +144,9 @@ main() {
 		exit 0
 	fi
 
-	# Create the tag (annotated) and push it.
 	git tag -a "$tag" -m "Release $tag"
 	git push "$remote" "refs/tags/$tag"
 
-	# stdout signal for CI: only print when we actually pushed a new tag.
 	printf '%s\n' "$tag"
 }
 

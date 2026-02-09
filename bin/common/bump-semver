@@ -2,133 +2,27 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
+	cat >&2 <<'USAGE'
 Usage:
   bump-semver (--major | --minor | --patch | --set X.Y.Z)
              [--prerelease ID] [--build META]
              [VERSION]
 
-Reads a SemVer version from stdin OR a positional VERSION argument (not both).
-Accepts optional leading "v" and ignores it.
+Bump or set a SemVer version. Reads VERSION from stdin or arg.
 
-Behavior:
-  - Core operation (required): bump or set core version.
-  - By default, outputs bare X.Y.Z (prerelease/build are NOT preserved).
-  - If --prerelease is provided, outputs X.Y.Z-<ID>.
-  - If --build is provided, outputs X.Y.Z+<META> (or X.Y.Z-<ID>+<META> if both provided).
-
-Input:
-  - May include prerelease/build; they are accepted but ignored unless you set new ones via flags.
-
-Examples:
-  echo "v1.2.3-rc.1+build.7" | bump-semver --patch
-  bump-semver --minor --prerelease rc.1 1.2.3
-  bump-semver --set 2.0.0 --build githash.abc123 1.9.9
-EOF
+Options:
+  --major | --minor | --patch  Increment core version
+  --set X.Y.Z                 Set core version
+  --prerelease ID             Append prerelease (e.g. rc.1)
+  --build META                Append build metadata
+  -h, --help                  Show this help message.
+USAGE
 }
 
 die() {
 	printf "ERROR: %s\n" "$*" >&2
 	exit 1
 }
-
-op=""
-set_core=""
-want_prerelease="false"
-want_build="false"
-prerelease_val=""
-build_val=""
-positional=()
-
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-	-h | --help)
-		usage
-		exit 0
-		;;
-	--major | --minor | --patch)
-		[[ -z $op ]] || die "Only one of --major/--minor/--patch/--set may be specified"
-		op="${1#--}"
-		shift
-		;;
-	--set)
-		[[ -z $op ]] || die "Only one of --major/--minor/--patch/--set may be specified"
-		op="set"
-		shift
-		[[ $# -gt 0 ]] || die "--set requires an argument X.Y.Z"
-		set_core="$1"
-		shift
-		;;
-	--prerelease)
-		want_prerelease="true"
-		shift
-		[[ $# -gt 0 ]] || die "--prerelease requires an argument"
-		prerelease_val="$1"
-		shift
-		;;
-	--build)
-		want_build="true"
-		shift
-		[[ $# -gt 0 ]] || die "--build requires an argument"
-		build_val="$1"
-		shift
-		;;
-	--*) die "Unknown option: $1" ;;
-	*)
-		positional+=("$1")
-		shift
-		;;
-	esac
-done
-
-[[ -n $op ]] || {
-	usage
-	die "One of --major/--minor/--patch/--set is required"
-}
-[[ ${#positional[@]} -le 1 ]] || die "At most one VERSION argument may be provided"
-
-# Read stdin or positional (not both)
-stdin_has_data="false"
-stdin_content=""
-if [[ ! -t 0 ]]; then
-	stdin_content="$(cat || true)"
-	if [[ -n ${stdin_content//$'\n'/} ]]; then
-		stdin_has_data="true"
-	fi
-fi
-
-if [[ ${#positional[@]} -eq 1 && $stdin_has_data == "true" ]]; then
-	die "Provide version via stdin OR positional argument, not both"
-fi
-if [[ ${#positional[@]} -eq 0 && $stdin_has_data == "false" ]]; then
-	usage
-	die "No version provided (expected stdin or positional VERSION)"
-fi
-
-if [[ ${#positional[@]} -eq 1 ]]; then
-	input_version="${positional[0]}"
-else
-	input_version="$(printf '%s' "$stdin_content" | awk 'NF { print $0; exit }')"
-fi
-
-input_version="$(printf '%s' "$input_version" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-[[ -n $input_version ]] || die "Empty version input"
-
-# Ignore leading v/V
-input_version="${input_version#v}"
-input_version="${input_version#V}"
-
-# SemVer parse (accept prerelease/build but only keep core)
-semver_re='^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-[[ $input_version =~ $semver_re ]] || die "Invalid SemVer input: '$input_version'"
-
-maj="${BASH_REMATCH[1]}"
-min="${BASH_REMATCH[2]}"
-pat="${BASH_REMATCH[3]}"
-
-for n in "$maj" "$min" "$pat"; do
-	[[ $n =~ ^0[0-9]+$ ]] && die "Invalid SemVer core number with leading zero: '$n' in '$input_version'"
-done
 
 validate_prerelease() {
 	local pr="$1"
@@ -153,48 +47,159 @@ validate_build() {
 	return 0
 }
 
-# If flags are provided with an empty string (e.g. --build ""), treat as "not set".
-# This supports CI patterns like: --build "${{ inputs.build_meta }}"
-if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
-	validate_prerelease "$prerelease_val" || die "Invalid --prerelease value: '$prerelease_val'"
-fi
-if [[ $want_build == "true" && -n $build_val ]]; then
-	validate_build "$build_val" || die "Invalid --build value: '$build_val'"
-fi
+# Defaults (populated/overridden by parse_args)
+op=""
+set_core=""
+want_prerelease="false"
+want_build="false"
+prerelease_val=""
+build_val=""
 
-new_major="$maj"
-new_minor="$min"
-new_patch="$pat"
+parse_args() {
+	positional=()
 
-case "$op" in
-major)
-	new_major=$((maj + 1))
-	new_minor=0
-	new_patch=0
-	;;
-minor)
-	new_minor=$((min + 1))
-	new_patch=0
-	;;
-patch) new_patch=$((pat + 1)) ;;
-set)
-	[[ $set_core =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "--set must be exactly X.Y.Z"
-	new_major="${BASH_REMATCH[1]}"
-	new_minor="${BASH_REMATCH[2]}"
-	new_patch="${BASH_REMATCH[3]}"
-	for n in "$new_major" "$new_minor" "$new_patch"; do
-		[[ $n =~ ^0[0-9]+$ ]] && die "--set contains a core number with leading zero: '$set_core'"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--major | --minor | --patch)
+			[[ -z $op ]] || die "Only one of --major/--minor/--patch/--set may be specified"
+			op="${1#--}"
+			shift
+			;;
+		--set)
+			[[ -z $op ]] || die "Only one of --major/--minor/--patch/--set may be specified"
+			op="set"
+			shift
+			[[ $# -gt 0 ]] || die "--set requires an argument X.Y.Z"
+			set_core="$1"
+			shift
+			;;
+		--prerelease)
+			want_prerelease="true"
+			shift
+			[[ $# -gt 0 ]] || die "--prerelease requires an argument"
+			prerelease_val="$1"
+			shift
+			;;
+		--build)
+			want_build="true"
+			shift
+			[[ $# -gt 0 ]] || die "--build requires an argument"
+			build_val="$1"
+			shift
+			;;
+		--*) die "Unknown option: $1" ;;
+		*)
+			positional+=("$1")
+			shift
+			;;
+		esac
 	done
-	;;
-*) die "Internal error: unknown op '$op'" ;;
-esac
+}
 
-out="${new_major}.${new_minor}.${new_patch}"
-if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
-	out="${out}-${prerelease_val}"
-fi
-if [[ $want_build == "true" && -n $build_val ]]; then
-	out="${out}+${build_val}"
-fi
+validate_inputs() {
+	[[ -n $op ]] || {
+		usage
+		die "One of --major/--minor/--patch/--set is required"
+	}
+	[[ ${#positional[@]} -le 1 ]] || die "At most one VERSION argument may be provided"
+}
 
-printf '%s\n' "$out"
+read_input_version() {
+	local stdin_has_data="false"
+	local stdin_content=""
+
+	if [[ ! -t 0 ]]; then
+		stdin_content="$(cat || true)"
+		if [[ -n ${stdin_content//$'\n'/} ]]; then
+			stdin_has_data="true"
+		fi
+	fi
+
+	if [[ ${#positional[@]} -eq 1 && $stdin_has_data == "true" ]]; then
+		die "Provide version via stdin OR positional argument, not both"
+	fi
+	if [[ ${#positional[@]} -eq 0 && $stdin_has_data == "false" ]]; then
+		usage
+		die "No version provided (expected stdin or positional VERSION)"
+	fi
+
+	if [[ ${#positional[@]} -eq 1 ]]; then
+		printf '%s' "${positional[0]}"
+	else
+		printf '%s' "$stdin_content" | awk 'NF { print $0; exit }'
+	fi
+}
+
+main() {
+	parse_args "$@"
+	validate_inputs
+
+	local input_version=""
+	input_version="$(read_input_version)"
+	input_version="$(printf '%s' "$input_version" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+	[[ -n $input_version ]] || die "Empty version input"
+
+	input_version="${input_version#v}"
+	input_version="${input_version#V}"
+
+	local semver_re='^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+	[[ $input_version =~ $semver_re ]] || die "Invalid SemVer input: '$input_version'"
+
+	local maj="${BASH_REMATCH[1]}"
+	local min="${BASH_REMATCH[2]}"
+	local pat="${BASH_REMATCH[3]}"
+
+	for n in "$maj" "$min" "$pat"; do
+		[[ $n =~ ^0[0-9]+$ ]] && die "Invalid SemVer core number with leading zero: '$n' in '$input_version'"
+	done
+
+	if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
+		validate_prerelease "$prerelease_val" || die "Invalid --prerelease value: '$prerelease_val'"
+	fi
+	if [[ $want_build == "true" && -n $build_val ]]; then
+		validate_build "$build_val" || die "Invalid --build value: '$build_val'"
+	fi
+
+	local new_major="$maj"
+	local new_minor="$min"
+	local new_patch="$pat"
+
+	case "$op" in
+	major)
+		new_major=$((maj + 1))
+		new_minor=0
+		new_patch=0
+		;;
+	minor)
+		new_minor=$((min + 1))
+		new_patch=0
+		;;
+	patch) new_patch=$((pat + 1)) ;;
+	set)
+		[[ $set_core =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "--set must be exactly X.Y.Z"
+		new_major="${BASH_REMATCH[1]}"
+		new_minor="${BASH_REMATCH[2]}"
+		new_patch="${BASH_REMATCH[3]}"
+		for n in "$new_major" "$new_minor" "$new_patch"; do
+			[[ $n =~ ^0[0-9]+$ ]] && die "--set contains a core number with leading zero: '$set_core'"
+		done
+		;;
+	*) die "Internal error: unknown op '$op'" ;;
+	esac
+
+	local out="${new_major}.${new_minor}.${new_patch}"
+	if [[ $want_prerelease == "true" && -n $prerelease_val ]]; then
+		out="${out}-${prerelease_val}"
+	fi
+	if [[ $want_build == "true" && -n $build_val ]]; then
+		out="${out}+${build_val}"
+	fi
+
+	printf '%s\n' "$out"
+}
+
+main "$@"

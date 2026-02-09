@@ -2,14 +2,7 @@
 set -euo pipefail
 
 usage() {
-	cat >&2 <<'EOF'
-Canonical screenshot mode for iOS Simulator and Android emulators.
-
-Commands:
-  apply   Apply a canonical screenshot state.
-  reset   Clear/restore state (best-effort on Android).
-  clear   Alias for reset.
-
+	cat >&2 <<'USAGE'
 Usage:
   screenshot-mode apply --platform ios     [--device DEVICE] [--dry-run]
   screenshot-mode reset --platform ios     [--device DEVICE] [--dry-run]
@@ -17,29 +10,14 @@ Usage:
   screenshot-mode reset --platform android [--serial SERIAL] [--dry-run]
   screenshot-mode (-h|--help)
 
-Required:
-  -p, --platform PLATFORM   One of: ios, android
+Canonical screenshot mode for iOS Simulator and Android emulators.
 
 Options:
-  -n, --dry-run             Print the command(s) without running them.
-
-  --device DEVICE           iOS only. simctl device selector. Default: booted
-                            (Examples: booted, <UDID>)
-
-  -s, --serial SERIAL       Android only. adb device serial. (Examples: emulator-5554)
-
-Notes:
-- iOS uses:    xcrun simctl status_bar <device> override|clear
-- Android uses adb to standardize emulator state (time, battery, airplane+wifi,
-  immersive mode, animations, heads-up notifications).
-- Android reset is best-effort and may vary by image/OS version.
-
-Examples:
-  screenshot-mode apply --platform ios
-  screenshot-mode reset --platform ios --device booted
-  screenshot-mode apply --platform android
-  screenshot-mode apply --platform android --serial emulator-5554
-EOF
+  -p, --platform PLATFORM  One of: ios, android
+  -n, --dry-run            Print the command(s) without running them
+  --device DEVICE          iOS only. simctl device selector (default: booted)
+  -s, --serial SERIAL      Android only. adb device serial
+USAGE
 }
 
 die() {
@@ -62,9 +40,8 @@ IOS_BATTERY_STATE="discharging"
 ANDROID_TIME_HHMM="09:41"
 ANDROID_DATE_YMD="2026-01-29"
 ANDROID_BATTERY_LEVEL="100"
-ANDROID_BATTERY_STATUS="3" # 3 = discharging
+ANDROID_BATTERY_STATUS="3"
 
-# Convert YYYY-MM-DD + HH:MM -> MMDDhhmmYYYY for `adb shell date`
 android_adb_date() {
 	local ymd="$1" hm="$2"
 	printf '%s%s%s%s%s' \
@@ -75,77 +52,82 @@ android_adb_date() {
 		"${ymd:0:4}"
 }
 
-[[ $# -ge 1 ]] || {
-	usage
-	exit 1
-}
-
-CMD="$1"
-shift
-
+# Defaults (populated/overridden by parse_args)
+CMD=""
 PLATFORM=""
 DRY_RUN="0"
-
 IOS_DEVICE="booted"
 ANDROID_SERIAL=""
 
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-	-p | --platform)
-		[[ $# -ge 2 ]] || die "--platform requires a value"
-		PLATFORM="$2"
-		shift 2
-		;;
-	-n | --dry-run)
-		DRY_RUN="1"
-		shift
-		;;
-	--device)
-		[[ $# -ge 2 ]] || die "--device requires a value"
-		IOS_DEVICE="$2"
-		shift 2
-		;;
-	-s | --serial)
-		[[ $# -ge 2 ]] || die "--serial requires a value"
-		ANDROID_SERIAL="$2"
-		shift 2
-		;;
-	-h | --help)
+parse_args() {
+	if [[ $# -eq 0 ]]; then
+		usage
+		exit 1
+	fi
+	if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
 		usage
 		exit 0
-		;;
-	--)
-		shift
-		break
-		;;
-	-*)
-		die "Unknown option: $1"
-		;;
-	*)
-		die "Unexpected argument: $1"
-		;;
+	fi
+
+	CMD="$1"
+	shift
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-p | --platform)
+			[[ $# -ge 2 ]] || die "--platform requires a value"
+			PLATFORM="$2"
+			shift 2
+			;;
+		-n | --dry-run)
+			DRY_RUN="1"
+			shift
+			;;
+		--device)
+			[[ $# -ge 2 ]] || die "--device requires a value"
+			IOS_DEVICE="$2"
+			shift 2
+			;;
+		-s | --serial)
+			[[ $# -ge 2 ]] || die "--serial requires a value"
+			ANDROID_SERIAL="$2"
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			die "Unexpected argument: $1"
+			;;
+		esac
+	done
+}
+
+validate_inputs() {
+	[[ -n $PLATFORM ]] || die "--platform is required (ios|android)"
+
+	case "$PLATFORM" in
+	ios | android) ;;
+	*) die "--platform must be one of: ios, android (got: $PLATFORM)" ;;
 	esac
-done
 
-[[ -n $PLATFORM ]] || die "--platform is required (ios|android)"
-
-case "$PLATFORM" in
-ios | android) ;;
-*)
-	die "--platform must be one of: ios, android (got: $PLATFORM)"
-	;;
-esac
-
-# Enforce platform-scoped flags
-if [[ $PLATFORM == "ios" && -n $ANDROID_SERIAL ]]; then
-	die "--serial is Android-only; use --device for iOS"
-fi
-if [[ $PLATFORM == "android" && $IOS_DEVICE != "booted" ]]; then
-	die "--device is iOS-only; use --serial for Android"
-fi
+	if [[ $PLATFORM == "ios" && -n $ANDROID_SERIAL ]]; then
+		die "--serial is Android-only; use --device for iOS"
+	fi
+	if [[ $PLATFORM == "android" && $IOS_DEVICE != "booted" ]]; then
+		die "--device is iOS-only; use --serial for Android"
+	fi
+}
 
 ios_run() {
-	# Usage: ios_run <args...>
 	local -a cmd=(xcrun simctl status_bar "$IOS_DEVICE")
 	cmd+=("$@")
 
@@ -175,7 +157,6 @@ ios_reset() {
 }
 
 android_run() {
-	# Usage: android_run <args...>
 	local -a cmd=(adb)
 	[[ -n $ANDROID_SERIAL ]] && cmd+=(-s "$ANDROID_SERIAL")
 	cmd+=("$@")
@@ -297,25 +278,32 @@ android_reset() {
 	fi
 }
 
-case "$CMD" in
-apply)
-	if [[ $PLATFORM == "ios" ]]; then
-		ios_apply
-	else
-		android_apply
-	fi
-	;;
-reset | clear)
-	if [[ $PLATFORM == "ios" ]]; then
-		ios_reset
-	else
-		android_reset
-	fi
-	;;
--h | --help)
-	usage
-	;;
-*)
-	die "Unknown command: $CMD"
-	;;
-esac
+main() {
+	parse_args "$@"
+	validate_inputs
+
+	case "$CMD" in
+	apply)
+		if [[ $PLATFORM == "ios" ]]; then
+			ios_apply
+		else
+			android_apply
+		fi
+		;;
+	reset | clear)
+		if [[ $PLATFORM == "ios" ]]; then
+			ios_reset
+		else
+			android_reset
+		fi
+		;;
+	-h | --help)
+		usage
+		;;
+	*)
+		die "Unknown command: $CMD"
+		;;
+	esac
+}
+
+main "$@"
