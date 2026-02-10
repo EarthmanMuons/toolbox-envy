@@ -123,7 +123,7 @@ General-purpose scripts intended for use by any repository:
 - `create-checksums` – Generate `sha256sums.txt` for release assets
 - `screenshot-mode` – Apply or reset canonical iOS/Android screenshot state
 - `tag-if-missing` – Create and push a missing git tag (SemVer aware)
-- `verify-checksums` – Verify an asset checksum and emit CI outputs
+- `verify-checksums` – Verify asset checksums for one or more patterns
 
 ### Flutter
 
