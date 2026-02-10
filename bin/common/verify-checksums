@@ -4,21 +4,15 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  verify-checksums --pattern <glob> [--dir <dir>] [--checksums <file>] [--output-prefix <prefix>]
+  verify-checksums [--dir <dir>] [--pattern <glob> ...]
 
-Verify a single asset's SHA-256 checksum against a checksums file.
+Verify asset SHA-256 checksums against sha256sums.txt.
 
 Options:
-  -p, --pattern         Glob pattern to match exactly one asset file (required)
-  -d, --dir             Directory containing the assets (default: dist)
-  -c, --checksums       Checksums file name (default: sha256sums.txt)
-  -o, --output-prefix   Output prefix for CI (default: asset)
+  -d, --dir <dir>       Directory containing the assets (default: dist)
+  -p, --pattern <glob>  Only verify files matching <glob> (default: *)
+                        May be specified multiple times.
   -h, --help            Show this help message.
-
-Notes:
-  In CI (when GITHUB_OUTPUT is set), emits:
-    - <prefix>_filename
-    - <prefix>_path
 USAGE
 }
 
@@ -27,20 +21,10 @@ die() {
 	exit 1
 }
 
-emit_github_output() {
-	local key="$1"
-	local value="$2"
-
-	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-		printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
-	fi
-}
-
 # Defaults (populated/overridden by parse_args)
 dist_dir="dist"
-pattern=""
+patterns=()
 checksums_file="sha256sums.txt"
-output_prefix="asset"
 
 parse_args() {
 	while (($#)); do
@@ -54,18 +38,7 @@ parse_args() {
 			shift
 			pattern="${1-}"
 			[[ -n $pattern ]] || die "--pattern requires a value"
-			;;
-		-c | --checksums)
-			shift
-			checksums_file="${1-}"
-			[[ -n $checksums_file ]] || die "--checksums requires a value"
-			;;
-		-o | --output-prefix)
-			shift
-			output_prefix="${1-}"
-			[[ -n $output_prefix ]] || die "--output-prefix requires a value"
-			[[ $output_prefix =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
-				die "--output-prefix must match ^[A-Za-z_][A-Za-z0-9_]*$"
+			patterns+=("$pattern")
 			;;
 		-h | --help)
 			usage
@@ -78,37 +51,60 @@ parse_args() {
 }
 
 validate_inputs() {
-	[[ -n $pattern ]] || {
-		usage
-		die "--pattern is required"
-	}
+	if ((${#patterns[@]} == 0)); then
+		patterns=("*")
+	fi
 
 	[[ -d $dist_dir ]] || die "Dist directory not found: $dist_dir"
 	[[ -f "$dist_dir/$checksums_file" ]] || die "$checksums_file not found in $dist_dir"
 }
 
 # Outputs:
-#   sets global ASSET_PATH
-resolve_single_asset() {
-	ASSET_PATH=""
-	local -a files=()
-
+#   sets global ASSET_PATHS
+#   sets global ASSET_FILENAMES
+collect_assets() {
 	shopt -s nullglob
-	# shellcheck disable=SC2206 # Intentional: allow glob expansion from user-provided --pattern.
-	files=("$dist_dir"/$pattern)
+	local pattern
+	for pattern in "${patterns[@]}"; do
+		local -a pattern_matches=()
+		# shellcheck disable=SC2206 # Intentional: allow glob expansion from user-provided --pattern.
+		pattern_matches=("$dist_dir"/$pattern)
+
+		if ((${#pattern_matches[@]} == 0)); then
+			die "No files matched pattern: $pattern"
+		fi
+
+		local matched_any=0
+		local f base
+		for f in "${pattern_matches[@]}"; do
+			[[ -f $f ]] || continue
+			base="${f##*/}"
+			[[ $base == "$checksums_file" ]] && continue
+			matched_any=1
+			add_unique_asset "$f"
+		done
+
+		if ((matched_any == 0)); then
+			die "No files matched pattern (after excluding $checksums_file): $pattern"
+		fi
+	done
 	shopt -u nullglob
 
-	if ((${#files[@]} == 0)); then
-		die "No files matched pattern: $pattern"
+	((${#ASSET_PATHS[@]} > 0)) || die "No assets matched patterns"
+}
+
+add_unique_asset() {
+	local path="$1"
+	local existing
+
+	if ((${#ASSET_PATHS[@]} > 0)); then
+		for existing in "${ASSET_PATHS[@]}"; do
+			[[ $existing == "$path" ]] && return 0
+		done
 	fi
 
-	if ((${#files[@]} != 1)); then
-		printf "ERROR: Expected exactly 1 file for pattern %s, found %s.\n" "$pattern" "${#files[@]}" >&2
-		printf '%s\n' "${files[@]}" >&2
-		exit 1
-	fi
-
-	ASSET_PATH="${files[0]}"
+	ASSET_PATHS+=("$path")
+	ASSET_FILENAMES+=("${path##*/}")
 }
 
 # Outputs:
@@ -120,15 +116,15 @@ lookup_checksum_line() {
 	local asset_filename="$1"
 
 	local line=""
-	local matches=0
+	local match_count=0
 
 	while IFS= read -r line; do
 		# Match the common "HASH  filename" format used by sha256sum,
 		# and the binary mode "HASH *filename" format.
 		case "$line" in
 		*"  $asset_filename" | *" *$asset_filename")
-			matches=$((matches + 1))
-			if ((matches == 1)); then
+			match_count=$((match_count + 1))
+			if ((match_count == 1)); then
 				CHECKSUM_LINE="$line"
 			else
 				# Defer error output until after we've collected enough to know it's multiple.
@@ -138,11 +134,11 @@ lookup_checksum_line() {
 		esac
 	done <"$checksums_path"
 
-	if ((matches == 0)); then
+	if ((match_count == 0)); then
 		die "No checksum entry found for $asset_filename in $checksums_file"
 	fi
 
-	if ((matches != 1)); then
+	if ((match_count != 1)); then
 		printf "ERROR: Multiple checksum entries found for %s in %s.\n" "$asset_filename" "$checksums_file" >&2
 		while IFS= read -r line; do
 			case "$line" in
@@ -169,18 +165,17 @@ main() {
 	parse_args "$@"
 	validate_inputs
 
-	resolve_single_asset
+	ASSET_PATHS=()
+	ASSET_FILENAMES=()
+	collect_assets
 
-	local asset_filename
-	asset_filename="${ASSET_PATH##*/}" # filename only
+	local i asset_filename
+	for i in "${!ASSET_PATHS[@]}"; do
+		asset_filename="${ASSET_FILENAMES[$i]}"
+		lookup_checksum_line "$asset_filename"
+		verify_checksum_line "$CHECKSUM_LINE"
+	done
 
-	lookup_checksum_line "$asset_filename"
-	verify_checksum_line "$CHECKSUM_LINE"
-
-	if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-		emit_github_output "${output_prefix}_filename" "$asset_filename"
-		emit_github_output "${output_prefix}_path" "$dist_dir/$asset_filename"
-	fi
 }
 
 main "$@"
