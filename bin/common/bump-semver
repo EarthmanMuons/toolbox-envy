@@ -4,18 +4,18 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  bump-semver (--major | --minor | --patch | --set X.Y.Z)
-             [--prerelease ID] [--build META]
-             [VERSION]
+  bump-semver (--major | --minor | --patch | --set <x.y.z>)
+             [--prerelease <id>] [--build <meta>]
+             [<version>]
 
-Bump or set a SemVer version. Reads VERSION from stdin or arg.
+Bump or set a SemVer version. Reads version from stdin or arg.
 
 Options:
   --major | --minor | --patch  Increment core version
-  --set X.Y.Z                 Set core version
-  --prerelease ID             Append prerelease (e.g. rc.1)
-  --build META                Append build metadata
-  -h, --help                  Show this help message.
+  --set <x.y.z>                Set core version
+  --prerelease <id>            Append prerelease (e.g. rc.1)
+  --build <meta>               Append build metadata
+  -h, --help                   Show this help message.
 USAGE
 }
 

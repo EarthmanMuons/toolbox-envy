@@ -4,15 +4,19 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  diagmerge [--width N] [--feather S] [--quality Q] <image1> <image2> [output]
+  diagmerge [--width <width>] [--feather <sigma>]
+           [--quality <quality>] <image1> <image2> [<output>]
 
 Create a diagonal merge: upper-left from image1, lower-right from image2.
 
 Options:
-  -w, --width N     Resize both inputs to width N (px), keeping aspect ratio
-  -f, --feather S   Feather sigma (px) for the diagonal edge (default: 0.8)
-  -q, --quality Q   Output quality for lossy formats (WebP/JPEG) (default: 90)
-  -h, --help        Show this help message
+  -w, --width <width>      Resize both inputs to width in px
+                           (keeps aspect ratio)
+  -f, --feather <sigma>    Feather sigma in px for the diagonal edge
+                           (default: 0.8)
+  -q, --quality <quality>  Output quality for lossy formats like WebP/JPEG
+                           (default: 90)
+  -h, --help               Show this help message
 USAGE
 }
 
