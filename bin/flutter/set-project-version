@@ -4,9 +4,9 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  set-project-version [--bump-build-on-same | --fail-on-same] [X.Y.Z]
+  set-project-version [--bump-build-on-same | --fail-on-same] [<x.y.z>]
 
-Set the pubspec version. Reads X.Y.Z from stdin or arg.
+Set the pubspec version. Reads x.y.z from stdin or arg.
 
 Options:
   --bump-build-on-same  Bump build even when core version is unchanged
@@ -73,7 +73,7 @@ parse_args() {
 }
 
 validate_inputs() {
-	[[ ${#positional[@]} -le 1 ]] || die "At most one X.Y.Z argument may be provided"
+	[[ ${#positional[@]} -le 1 ]] || die "At most one x.y.z argument may be provided"
 }
 
 read_input_version() {

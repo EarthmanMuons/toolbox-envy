@@ -4,19 +4,20 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  screenshot-mode apply --platform ios     [--device DEVICE] [--dry-run]
-  screenshot-mode reset --platform ios     [--device DEVICE] [--dry-run]
-  screenshot-mode apply --platform android [--serial SERIAL] [--dry-run]
-  screenshot-mode reset --platform android [--serial SERIAL] [--dry-run]
+  screenshot-mode apply --platform <platform>
+                 [--device <device> | --serial <serial>] [--dry-run]
+  screenshot-mode reset --platform <platform>
+                 [--device <device> | --serial <serial>] [--dry-run]
   screenshot-mode (-h|--help)
 
 Canonical screenshot mode for iOS Simulator and Android emulators.
 
 Options:
-  -p, --platform PLATFORM  One of: ios, android
-  -n, --dry-run            Print the command(s) without running them
-  --device DEVICE          iOS only. simctl device selector (default: booted)
-  -s, --serial SERIAL      Android only. adb device serial
+  -p, --platform <platform>  One of: ios, android
+  -n, --dry-run              Print the command(s) without running them
+  -d, --device <device>      iOS only. simctl device selector
+                             (default: booted)
+  -s, --serial <serial>      Android only. adb device serial
 USAGE
 }
 
@@ -83,7 +84,7 @@ parse_args() {
 			DRY_RUN="1"
 			shift
 			;;
-		--device)
+		-d | --device)
 			[[ $# -ge 2 ]] || die "--device requires a value"
 			IOS_DEVICE="$2"
 			shift 2

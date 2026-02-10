@@ -9,8 +9,8 @@ Usage:
 Create sha256sums.txt for all regular files in a directory.
 
 Options:
-  -d, --dir   Directory containing the assets (default: dist)
-  -h, --help  Show this help message.
+  -d, --dir <dir>  Directory containing the assets (default: dist)
+  -h, --help       Show this help message.
 USAGE
 }
 

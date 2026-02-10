@@ -7,7 +7,8 @@ Usage:
   tag-if-missing [--remote <name>] [--dry-run] [<tag-or-version>]
 
 Create and push a git tag if it does not already exist.
-Reads the tag/version from stdin or arg. If input is SemVer, prefixes "v".
+Reads the tag/version from stdin or arg.
+If input is SemVer, prefixes "v".
 
 Options:
   --remote <name>  Remote to check/push to (default: origin)

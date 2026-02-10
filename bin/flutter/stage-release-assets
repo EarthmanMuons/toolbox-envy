@@ -9,8 +9,10 @@ Usage:
 Stage Flutter release assets into dist/ with deterministic names.
 
 Options:
-  --slug <slug>  Slug for output filenames (required; lowercase alnum)
-  --tag <tag>    Tag to use locally (required outside CI)
+  --slug <slug>  Slug for output filenames
+                (required; lowercase alnum)
+  --tag <tag>    Tag to use locally
+                (required outside CI)
   --dist <dir>   Output directory (default: dist)
   -h, --help     Show this help message
 USAGE

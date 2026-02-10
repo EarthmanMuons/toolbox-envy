@@ -10,11 +10,12 @@ Set up an App Store Connect API auth key from env vars.
 
 Required:
   ASC_AUTH_KEY_B64   Base64-encoded AuthKey .p8 contents
-  ASC_KEY_ID         Key ID used in filename AuthKey_<ID>.p8
+  ASC_KEY_ID         Key ID used in filename AuthKey_<id>.p8
 
 Optional:
-  ASC_KEY_DIR                  Directory to place the key (default: temp dir)
-  ASC_AUTH_KEY_FORCE_DECODE=1  Decode even if key file already exists
+  ASC_KEY_DIR                  Directory to place the key
+                              (default: temp dir)
+  ASC_AUTH_KEY_FORCE_DECODE=1  Decode even if key file exists
   ASC_USE_STANDARD_DIR=1       Use ~/.appstoreconnect/private_keys
 
 Outputs:

@@ -4,16 +4,17 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'USAGE'
 Usage:
-  bump-calver [--format FMT] [DATE]
+  bump-calver [--format <format>] [<date>]
 
-Print a CalVer for a date (UTC). Reads DATE from stdin or arg; if empty, uses today.
+Print a CalVer for a date (UTC).
+Reads date from stdin or arg; if empty, uses today.
 
 Accepted DATE forms:
   YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD, YYYYMMDD
 
 Options:
-  --format FMT  Override output format (default: YYYY.MM.DD)
-  -h, --help    Show this help message.
+  --format <format>  Override output format (default: YYYY.MM.DD)
+  -h, --help          Show this help message.
 
 Tokens:
   YYYY  Full year            (e.g. 2006, 2016, 2106)

@@ -8,7 +8,8 @@ Usage:
   get-project-version | bump-changelog-version
 
 Update CHANGELOG.md (Keep a Changelog style):
-- Move "## [Unreleased]" to "## [<new>] - <today>"
+- Move "## [Unreleased]" to
+  "## [<new>] - <today>"
 - Insert a fresh "## [Unreleased]" above it
 - Update reference links for [Unreleased] and [<new>]
 USAGE
