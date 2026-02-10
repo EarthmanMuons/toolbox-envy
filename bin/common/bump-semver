@@ -15,7 +15,7 @@ Options:
   --set <x.y.z>                Set core version
   --prerelease <id>            Append prerelease (e.g. rc.1)
   --build <meta>               Append build metadata
-  -h, --help                   Show this help message.
+  -h, --help                   Show this help message
 USAGE
 }
 

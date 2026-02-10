@@ -8,6 +8,9 @@ Usage:
 
 Set up an App Store Connect API auth key from env vars.
 
+Options:
+  -h, --help  Show this help message
+
 Required:
   ASC_AUTH_KEY_B64   Base64-encoded AuthKey .p8 contents
   ASC_KEY_ID         Key ID used in filename AuthKey_<id>.p8

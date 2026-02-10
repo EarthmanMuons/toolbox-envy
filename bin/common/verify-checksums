@@ -11,8 +11,8 @@ Verify asset SHA-256 checksums against sha256sums.txt.
 Options:
   -d, --dir <dir>       Directory containing the assets (default: dist)
   -p, --pattern <glob>  Only verify files matching <glob> (default: *)
-                        May be specified multiple times.
-  -h, --help            Show this help message.
+                        May be specified multiple times
+  -h, --help            Show this help message
 USAGE
 }
 
