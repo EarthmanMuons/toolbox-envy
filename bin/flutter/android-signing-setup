@@ -9,6 +9,9 @@ Usage:
 Prepare Android signing files under ANDROID_SIGNING_DIR
 (default: ./android).
 
+Options:
+  -h, --help  Show this help message
+
 Required environment variables:
   ANDROID_KEYSTORE_PASSWORD
   ANDROID_KEY_ALIAS

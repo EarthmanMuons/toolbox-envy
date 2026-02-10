@@ -14,7 +14,7 @@ Accepted DATE forms:
 
 Options:
   --format <format>  Override output format (default: YYYY.MM.DD)
-  -h, --help          Show this help message.
+  -h, --help          Show this help message
 
 Tokens:
   YYYY  Full year            (e.g. 2006, 2016, 2106)

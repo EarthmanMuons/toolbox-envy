@@ -8,6 +8,9 @@ Usage:
 
 Set up iOS signing in CI from env vars.
 
+Options:
+  -h, --help  Show this help message
+
 Required environment variables:
   IOS_SIGNING_CERT_B64          Base64-encoded P12 signing
                                certificate

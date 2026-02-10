@@ -7,6 +7,9 @@ Usage:
   get-project-version
 
 Print the SemVer core from pubspec.yaml (X.Y.Z).
+
+Options:
+  -h, --help  Show this help message
 USAGE
 }
 

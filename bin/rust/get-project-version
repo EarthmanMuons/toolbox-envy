@@ -7,6 +7,9 @@ Usage:
   get-project-version [<package-name>]
 
 Read the Rust package version via cargo metadata.
+
+Options:
+  -h, --help  Show this help message
 USAGE
 }
 

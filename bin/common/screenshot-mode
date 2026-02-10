@@ -8,7 +8,6 @@ Usage:
                  [--device <device> | --serial <serial>] [--dry-run]
   screenshot-mode reset --platform <platform>
                  [--device <device> | --serial <serial>] [--dry-run]
-  screenshot-mode (-h|--help)
 
 Canonical screenshot mode for iOS Simulator and Android emulators.
 
@@ -18,6 +17,7 @@ Options:
   -d, --device <device>      iOS only. simctl device selector
                              (default: booted)
   -s, --serial <serial>      Android only. adb device serial
+  -h, --help                 Show this help message
 USAGE
 }
 

@@ -12,6 +12,9 @@ Update CHANGELOG.md (Keep a Changelog style):
   "## [<new>] - <today>"
 - Insert a fresh "## [Unreleased]" above it
 - Update reference links for [Unreleased] and [<new>]
+
+Options:
+  -h, --help  Show this help message
 USAGE
 }
 

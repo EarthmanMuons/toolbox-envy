@@ -13,7 +13,7 @@ If input is SemVer, prefixes "v".
 Options:
   --remote <name>  Remote to check/push to (default: origin)
   --dry-run        Do not create or push; report to stderr
-  -h, --help       Show this help
+  -h, --help       Show this help message
 USAGE
 }
 
