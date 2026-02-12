@@ -113,10 +113,7 @@ main() {
 
 	local tmp_dir=""
 	tmp_dir="$(mktemp -d)"
-	cleanup() {
-		rm -rf "$tmp_dir"
-	}
-	trap cleanup EXIT
+	trap 'rm -rf "'"$tmp_dir"'"' EXIT
 
 	local cert_path="$tmp_dir/signing.p12"
 	printf '%s decoding signing cert\n' "$log_prefix"
@@ -223,6 +220,9 @@ main() {
 	else
 		printf '%s diagnostics: ios/Runner.xcworkspace not found, skipping\n' "$log_prefix" >&2
 	fi
+
+	rm -rf "$tmp_dir"
+	trap - EXIT
 
 	printf '%s signing configuration ready\n' "$log_prefix"
 }
