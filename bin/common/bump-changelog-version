@@ -212,7 +212,7 @@ rewrite_changelog() {
 
 	local tmp=""
 	tmp="$(mktemp "${TMPDIR:-/tmp}/changelog.XXXXXX")"
-	trap 'rm -f "$tmp"' EXIT
+	trap 'rm -f "'"$tmp"'"' EXIT
 
 	awk -v newv="$new_version" \
 		-v today="$today" \
@@ -263,6 +263,8 @@ rewrite_changelog() {
 ' "$changelog" >"$tmp"
 
 	cp "$tmp" "$changelog"
+	rm -f "$tmp"
+	trap - EXIT
 }
 
 main() {
