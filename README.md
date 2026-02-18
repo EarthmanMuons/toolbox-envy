@@ -121,6 +121,7 @@ General-purpose scripts intended for use by any repository:
 - `bump-changelog-version` – Roll CHANGELOG.md from Unreleased to a new release
 - `bump-semver` – Bump or set a SemVer core, with optional prerelease/build
 - `create-checksums` – Generate `sha256sums.txt` for release assets
+- `rotate-whatsnew` – Roll `docs/whatsnew/unreleased` into a release dir
 - `screenshot-mode` – Apply or reset canonical iOS/Android screenshot state
 - `tag-if-missing` – Create and push a missing git tag (SemVer aware)
 - `verify-checksums` – Verify asset checksums for one or more patterns
