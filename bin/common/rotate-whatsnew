@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'USAGE'
+Usage:
+  rotate-whatsnew [--dir <dir>] [<version>]
+  get-project-version | rotate-whatsnew [--dir <dir>]
+
+Copy files from an unreleased whatsnew directory into a release directory,
+then empty unreleased files for the next cycle.
+
+Options:
+  --dir <dir>    Whatsnew root directory (default: docs/whatsnew)
+  -h, --help     Show this help message
+USAGE
+}
+
+die() {
+	printf "ERROR: %s\n" "$*" >&2
+	exit 1
+}
+
+# Defaults (populated/overridden by parse_args)
+whatsnew_root="docs/whatsnew"
+version=""
+positional=()
+
+parse_args() {
+	while (($#)); do
+		case "$1" in
+		--dir)
+			shift
+			whatsnew_root="${1-}"
+			[[ -n $whatsnew_root ]] || die "--dir requires a value"
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--*)
+			die "Unknown option: $1"
+			;;
+		*)
+			positional+=("$1")
+			;;
+		esac
+		shift
+	done
+}
+
+read_version_input() {
+	local stdin_has_data="false"
+	local stdin_content=""
+
+	if [[ ! -t 0 ]]; then
+		stdin_content="$(cat || true)"
+		if [[ -n ${stdin_content//[[:space:]]/} ]]; then
+			stdin_has_data="true"
+		fi
+	fi
+
+	if ((${#positional[@]} > 1)); then
+		die "Expected at most one <version> argument"
+	fi
+
+	if ((${#positional[@]} == 1)) && [[ $stdin_has_data == "true" ]]; then
+		die "Provide <version> via stdin OR positional argument, not both"
+	fi
+
+	if ((${#positional[@]} == 1)); then
+		version="${positional[0]}"
+		return
+	fi
+
+	if [[ $stdin_has_data == "true" ]]; then
+		local lines count
+		lines="$(
+			printf '%s\n' "$stdin_content" |
+				awk '
+          {
+            line=$0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line != "") print line
+          }
+        '
+		)"
+
+		count="$(printf '%s\n' "$lines" | awk 'END { print NR }')"
+		[[ $count -eq 1 ]] || die "Expected exactly one non-empty line on stdin"
+		version="$lines"
+		return
+	fi
+
+	usage
+	exit 1
+}
+
+validate_inputs() {
+	[[ -n $version ]] || die "Missing required <version> argument"
+	[[ $version != "unreleased" ]] || die "<version> cannot be 'unreleased'"
+	[[ $version != */* ]] || die "<version> must be a single directory name"
+	[[ -d $whatsnew_root ]] || die "Whatsnew root directory not found: $whatsnew_root"
+	[[ -d $whatsnew_root/unreleased ]] || die "Unreleased directory not found: $whatsnew_root/unreleased"
+}
+
+# Outputs:
+#   sets global FILES (filenames only)
+collect_unreleased_files() {
+	FILES=()
+
+	local f base
+	shopt -s nullglob
+	for f in "$whatsnew_root"/unreleased/*; do
+		[[ -f $f ]] || continue
+		base="${f##*/}"
+		FILES+=("$base")
+	done
+	shopt -u nullglob
+
+	((${#FILES[@]} > 0)) || die "No files found in: $whatsnew_root/unreleased"
+}
+
+copy_and_truncate_files() {
+	local release_dir="$whatsnew_root/$version"
+	mkdir -p "$release_dir"
+
+	local name src dst
+	for name in "${FILES[@]}"; do
+		src="$whatsnew_root/unreleased/$name"
+		dst="$release_dir/$name"
+
+		[[ ! -e $dst ]] || die "Release file already exists: $dst"
+		cp "$src" "$dst"
+		: >"$src"
+	done
+}
+
+main() {
+	parse_args "$@"
+	read_version_input
+	validate_inputs
+	collect_unreleased_files
+	copy_and_truncate_files
+
+	printf "rotated %s file(s) into %s/%s\n" "${#FILES[@]}" "$whatsnew_root" "$version" >&2
+}
+
+main "$@"
